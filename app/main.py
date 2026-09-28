@@ -48,8 +48,14 @@ if FRONTEND_DIR.exists():
 
 
 @app.get("/", include_in_schema=False)
-async def home(intro: str | None = Query(default=None)) -> FileResponse:
+async def home(
+    intro: str | None = Query(default=None),
+    auth: str | None = Query(default=None),
+) -> FileResponse:
     """Serve the retro cover by default; retain the current MVP at ?intro=original."""
+    # Login and signup are part of the current retro entry. Sending auth query
+    # routes to the legacy index made users returning from the forest see the
+    # retired screen.
     page = "index.html" if intro == "original" else "intro-retro.html"
     response = FileResponse(FRONTEND_DIR / page)
     response.headers["Cache-Control"] = "no-store, max-age=0"

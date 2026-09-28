@@ -70,19 +70,19 @@ test('a superseded account request cannot restore the old name', async () => {
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(seen, ['현재 계정']); sync.dispose();
 });
-test('forest guest save does not cache the authenticated name or change cosmetics', async () => {
+test('forest guest save stays in memory and does not cache the authenticated name', async () => {
   const start = game.indexOf('  class DemoForestAdapter {');
   const end = game.indexOf('  class ApiForestAdapter {', start);
-  const saved = {}, guest = { avatar: { name: '기존 숲지기', cosmetics: { hair: 'hair-1' } }, carrots: 10 };
+  const guest = { avatar: { name: '기존 숲지기', cosmetics: { hair: 'hair-1' } }, carrots: 10 };
   const context = { STORAGE_KEY: 'save', normalizeState: value => value || structuredClone(guest), defaultState: () => structuredClone(guest),
-    localStorage: { getItem: key => saved[key] || null, setItem: (key, value) => saved[key] = value } };
+    JSON };
   vm.runInNewContext(game.slice(start, end) + '\nthis.Adapter = DemoForestAdapter;', context);
   const adapter = new context.Adapter(), state = await adapter.load(); state.avatar.name = '계정에서 받은 이름';
   state.carrots = 20; await adapter.save(state);
-  assert.equal(JSON.parse(saved.save).avatar.name, '기존 숲지기');
+  assert.equal(adapter.memory.avatar.name, '기존 숲지기');
   assert.equal(state.avatar.name, '계정에서 받은 이름');
-  assert.equal(JSON.parse(saved.save).carrots, 20);
-  assert.equal(JSON.parse(saved.save).avatar.cosmetics.hair, 'hair-1');
+  assert.equal(adapter.memory.carrots, 20);
+  assert.equal(adapter.memory.avatar.cosmetics.hair, 'hair-1');
 });
 test('forest has no local nickname editor, retains customization and loads the bridge offline', () => {
   const html = fs.readFileSync(path.join(base, 'forest.html'), 'utf8');

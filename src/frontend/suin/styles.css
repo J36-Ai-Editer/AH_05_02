@@ -301,14 +301,13 @@ body.modal-open{overflow:hidden}
 .risk-preview-controls button.active{border-color:var(--green);background:var(--mint);color:var(--green-dark)}
 .current-risk-signal-body{width:100%}
 .risk-traffic-light{display:grid;grid-template-columns:repeat(3,minmax(74px,1fr));gap:14px;width:100%;padding:24px 32px;border-radius:24px;background:#26322f;border:3px solid #17211f;box-shadow:inset 0 2px 12px rgba(0,0,0,.28)}
+.risk-traffic-light.binary-risk-traffic-light{grid-template-columns:repeat(2,minmax(110px,1fr))}
 .traffic-signal{display:grid;justify-items:center;gap:8px;color:#fff;font-size:15px;font-weight:900;opacity:.32;transition:opacity .2s,transform .2s}
 .traffic-signal i{display:grid;place-items:center;width:clamp(92px,9.5vw,132px);height:clamp(92px,9.5vw,132px);border-radius:50%;background:transparent}
 .traffic-signal i img{width:100%;height:100%;border-radius:50%;object-fit:contain;opacity:.5;filter:saturate(.82) brightness(.9);transition:opacity .2s,filter .2s,transform .2s}
 .current-risk-signal-card[data-risk="high"] .traffic-signal.high,
-.current-risk-signal-card[data-risk="caution"] .traffic-signal.caution,
 .current-risk-signal-card[data-risk="low"] .traffic-signal.low{opacity:1;transform:scale(1.05)}
 .current-risk-signal-card[data-risk="high"] .traffic-signal.high img,
-.current-risk-signal-card[data-risk="caution"] .traffic-signal.caution img,
 .current-risk-signal-card[data-risk="low"] .traffic-signal.low img{opacity:1;filter:none;transform:none;box-shadow:none}
 .current-risk-signal-card[data-risk="high"]{border-color:#d7847d}
 .current-risk-signal-card[data-risk="caution"]{border-color:#dfbd54}
@@ -446,7 +445,7 @@ body.modal-open{overflow:hidden}
 @media(max-width:1000px){.prediction-mascot{width:132px;height:132px}}
 @media(max-width:1000px){.health-input-guide,.health-input-panel.two-column,.lifestyle-question-grid,.detail-health-grid,.review-grid,.prediction-status-track{grid-template-columns:1fr}.smoking-status-card,.exercise-detail-card{grid-column:auto}.exercise-detail-grid{grid-template-columns:1fr}.health-input-panel .actions{flex-direction:column-reverse}.health-input-panel .actions button{width:100%}.prediction-status-card{padding:34px 22px 28px}.status-symbol{width:92px;height:92px;font-size:34px}.prediction-status-card h3{font-size:30px}.prediction-status-card p{font-size:18px}.prediction-status-track li{font-size:17px}}
 @media(prefers-reduced-motion:reduce){.prediction-mascot{animation:none!important}}
-@media(forced-colors:active){.age-risk-signal-track img{border:3px solid CanvasText}.forecast-status-badge,.scenario-card,.uncertainty-panel,.risk-traffic-light,.traffic-signal i{border:2px solid CanvasText}.current-risk-signal-card[data-risk="high"] .traffic-signal.high,.current-risk-signal-card[data-risk="caution"] .traffic-signal.caution,.current-risk-signal-card[data-risk="low"] .traffic-signal.low{outline:4px solid Highlight;outline-offset:3px}}
+@media(forced-colors:active){.age-risk-signal-track img{border:3px solid CanvasText}.forecast-status-badge,.scenario-card,.uncertainty-panel,.risk-traffic-light,.traffic-signal i{border:2px solid CanvasText}.current-risk-signal-card[data-risk="high"] .traffic-signal.high,.current-risk-signal-card[data-risk="low"] .traffic-signal.low{outline:4px solid Highlight;outline-offset:3px}}
 
 /* 모바일 헤더 보정: 서비스명이 "간당 / 간당"처럼 줄바꿈되지 않도록 유지 */
 .brand,
@@ -1790,3 +1789,8 @@ body.intro-mode .story-input-visual{position:relative;isolation:isolate}
 .home-feature-card:focus-visible,.header-my-page>summary:focus-visible{outline:3px solid var(--green);outline-offset:4px}
 @media(max-width:1000px){.home-feature-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.header-utilities{gap:6px}.header-my-page>summary,.header-utilities #font-toggle{font-size:14px;padding:8px}.home-feature-grid{grid-template-columns:1fr;gap:12px}.home-feature-card{min-height:150px;padding:20px}.home-feature-card strong{font-size:24px}.home-feature-card img{width:96px;height:106px}}
+
+/* Production brand logo: keep the high-resolution transparent asset crisp at every breakpoint. */
+.topbar .brand{display:flex;align-items:center;flex:0 0 auto;min-height:48px;line-height:0}
+.topbar .brand-logo{display:block;width:clamp(150px,14vw,220px);height:auto;max-height:62px;object-fit:contain}
+@media(max-width:760px){.topbar .brand-logo{width:clamp(126px,38vw,168px);max-height:52px}}

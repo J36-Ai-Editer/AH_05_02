@@ -7,7 +7,7 @@ from app.main import app, carrot_forest, forest_manifest, forest_service_worker
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_home_record_player_is_integrated_into_the_room_background_in_both_renderers() -> None:
+def test_home_record_player_uses_the_restored_pixel_furniture_in_both_renderers() -> None:
     import struct
 
     asset_name = "carrot-forest-home-v5.png"
@@ -21,7 +21,8 @@ def test_home_record_player_is_integrated_into_the_room_background_in_both_rende
     worker = (ROOT / "src/frontend/forest-sw.js").read_text(encoding="utf-8")
     assert all(asset_name in script for script in (game, phaser, worker))
     assert "homeRecordPlayerImage" not in game
-    assert 'this.load.image("home-record-player"' not in phaser
+    assert 'this.load.image("home-record-player", "/static/assets/home-record-player-cottage-v1.png' in phaser
+    assert "home-record-player-cottage-v1.png" in worker
     assert "HOME_RECORD_PLAYER" in game and "HOME_RECORD_PLAYER" in phaser
     assert "HOME_LIGHT_SOURCES" in game and "HOME_LIGHT_SOURCES" in phaser
     assert "distanceTo(HOME_RECORD_PLAYER.x, HOME_RECORD_PLAYER.y) < 76" in game
@@ -61,8 +62,12 @@ def test_pixel_game_state_reward_and_adapter_contract_are_explicit() -> None:
     assert "ApiForestAdapter" in script
     assert "기록은 어디에 저장되나요?" not in html
     assert "CARROT FOREST · WORLD STUDIO" not in html
-    assert script.count("completed: 3") == 4
-    assert "completed >= 15" in script
+    assert 'members: [{ id: "me", name: "나", completed: 0, target: SOLO_DAILY_QUEST_TARGET, me: true }]' in script
+    assert script.count("completed: 3") == 0
+    assert "FOREST_SESSION_STORAGE_KEY" in script
+    assert "syncForestGroup" in script
+    assert "state.groupTarget" in script
+    assert "completed >= target" in script
     assert "state.rewardClaimed" in script
     assert "state.avatar.equipped" in script
     assert "state.placed.push" in script
@@ -203,7 +208,6 @@ def test_forest_onboarding_rag_collaboration_and_tool_routes_are_connected() -> 
     for control_id in (
         "start-prediction-flow",
         "challenge-flow-dialog",
-        "open-wisdom-spring",
         "group-goal-form",
         "add-family-colleague",
         "inventory-dialog",
@@ -214,8 +218,9 @@ def test_forest_onboarding_rag_collaboration_and_tool_routes_are_connected() -> 
     for style in ("운동 중심", "식단 중심", "내가 조합하기"):
         assert style in html
     assert "오늘까지의 챌린지 결과를 토대로 챌린지 생성 중" in html
-    assert "간당이와 건강 상식" in html
-    assert "지혜의 샘으로 이동" in html
+    assert 'id="wisdom-spring-sign"' not in html
+    assert 'id="open-wisdom-spring"' not in html
+    assert 'wisdom_spring: "지혜의 샘 묻기"' in script
     assert "내 생활습관 지도" not in html
     assert "내 생활습관 지도(RAG)" not in html
     assert 'id="forest-rag-form"' not in html
@@ -328,7 +333,8 @@ def test_world_scene_transitions_visual_storage_cats_and_wisdom_spring_are_conne
         assert scene in script
     for action in ("enter_home", "enter_garden", "rest", "water", "wisdom_spring", "exit_scene"):
         assert f'action === "{action}"' in script
-    assert "wisdom-spring-sign" in html
+    assert "wisdom-spring-sign" not in html
+    assert "distanceTo(WISDOM_SPRING.x, WISDOM_SPRING.y) < 72" in script
     assert "당근의 요정 간당이가 알려주는, 건강 정보" in script
     assert "/api/v1/health-education/questions" in script
     assert "WISDOM_QUESTION_EXAMPLES" in script
@@ -470,7 +476,7 @@ def test_lpc_avatar_expansion_storage_reward_and_sit_toggle_contract() -> None:
     assert (ROOT / "scripts/generate_original_bgm.py").is_file()
     assert "gold_eyes_orange_cat" in phaser_script
     assert "Phaser.Scale.NONE" in phaser_script
-    assert 'const CACHE_NAME = "gandang-carrot-forest-pwa-v178-16";' in worker
+    assert 'const CACHE_NAME = "gandang-carrot-forest-pwa-v181-wisdom-lp";' in worker
     assert "town-pro-sensory-cc0.mp3" in worker
     assert "carrot-forest-main-theme.mp3" in worker
     assert "forest-canopy-original.wav" in worker
@@ -530,7 +536,7 @@ def test_storybook_world_assets_and_fullscreen_game_shell_are_connected() -> Non
     assert "garden-carrot-v168.png" in garden_script
     assert "carrot-forest-storage-atlas-v4.png" in game_script
     assert "carrot-forest-animated-objects-v3.png" in phaser_script
-    assert "home-record-player-v160.png" not in phaser_script
+    assert "home-record-player-cottage-v1.png" in phaser_script
     assert "Full-screen game shell" in css
     assert '<h1 id="forest-title">당근의 숲</h1>' in html
     assert "CARROT FOREST · WORLD STUDIO" not in html

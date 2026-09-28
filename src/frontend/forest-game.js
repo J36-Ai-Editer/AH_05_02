@@ -1,7 +1,9 @@
 (() => {
   "use strict";
 
-  const STORAGE_KEY = "gandang-carrot-forest-demo-v1";
+  const FOREST_SESSION_STORAGE_KEY = "gandang-forest-api-session-v1";
+  const GROUP_SYNC_INTERVAL_MS = 20000;
+  const SOLO_DAILY_QUEST_TARGET = 3;
   const ATMOSPHERE_KEY = "gandang-carrot-forest-atmosphere-v1";
   const BGM_VOLUME_KEY = "gandang-carrot-forest-bgm-volume-v1";
   const BGM_MUTED_KEY = "gandang-carrot-forest-bgm-muted-v1";
@@ -15,7 +17,8 @@
   const RENDER_SCALE = 2;
   const TODAY = new Date().toISOString().slice(0, 10);
   const $ = (selector) => document.querySelector(selector);
-  const WISDOM_SPRING_SIGN = Object.freeze({ x: 108, y: 424 });
+  const WISDOM_SPRING = Object.freeze({ x: 108, y: 424 });
+  const WISDOM_CHAT_AVATAR_SRC = "/static/assets/gandangi-wisdom-guide-chat-v1.png?v=20260916-1";
   const WORLD_MEMORY_CAMERA = Object.freeze({ x: 666, y: 360, bounds: { left: 634, right: 704, top: 320, bottom: 394 } });
   const WORLD_FIXED_LANTERNS = Object.freeze([
     { id: "house_back", x: 192, y: 82, radius: 98, bounds: { left: 174, right: 210, top: 56, bottom: 112 } },
@@ -53,6 +56,12 @@
     ["moon_mage", "달빛의 빛샘"], ["forest_witch", "숲속의 수인"],
     ["inventor", "발명의 준혁"], ["knight", "해결의 세준"],
   ]);
+  const MEMBER_PROFILE_IMAGES = Object.freeze({
+    moon_mage: "/static/assets/avatar-preset-3-moon-mage-profile.png",
+    forest_witch: "/static/assets/avatar-preset-4-forest-elf-profile.png",
+    inventor: "/static/assets/avatar-preset-5-inventor-profile.png",
+    knight: "/static/assets/avatar-preset-6-knight-profile.png",
+  });
 
   function buildMemoryPresets(sourceState) {
     const history = Array.isArray(sourceState?.outfitHistory) ? sourceState.outfitHistory : [];
@@ -781,13 +790,8 @@
       challengeCarrotClaims: {},
       challengePlan: { onboarded: false, style: null, questIds: [], lastGeneratedAt: null },
       groupGoalMemo: "",
-      members: [
-        { id: "me", name: "나", completed: 0, me: true },
-        { id: "m2", name: "빛샘", completed: 3 },
-        { id: "m3", name: "준혁", completed: 3 },
-        { id: "m4", name: "수인", completed: 3 },
-        { id: "m5", name: "세준", completed: 3 },
-      ],
+      members: [{ id: "me", name: "나", completed: 0, target: SOLO_DAILY_QUEST_TARGET, me: true }],
+      groupTarget: SOLO_DAILY_QUEST_TARGET,
       carrots: 100,
       inventory: [...storageObjectCodes],
       outfitHistory: [
@@ -880,8 +884,10 @@
     state.challengePlan = { ...fallback.challengePlan, ...(value.challengePlan || {}) };
     state.groupGoalMemo = typeof value.groupGoalMemo === "string" ? value.groupGoalMemo.slice(0, 160) : "";
     state.v2RewardOpenedDay = typeof value.v2RewardOpenedDay === "string" ? value.v2RewardOpenedDay : null;
-    state.members = Array.isArray(value.members) && value.members.length === 5 ? value.members : fallback.members;
+    state.members = Array.isArray(value.members) && value.members.length ? value.members : fallback.members;
     state.members = state.members.map((member) => member.id === "m5" && member.name === "숲지기" ? { ...member, name: "세준" } : member);
+    state.groupTarget = Number.isFinite(Number(value.groupTarget)) && Number(value.groupTarget) > 0
+      ? Number(value.groupTarget) : fallback.groupTarget;
     state.inventory = [...new Set([...(Array.isArray(value.inventory) ? value.inventory : fallback.inventory), ...storageObjectCodes])]
       .filter((code) => itemCatalog[code]?.kind === "object");
     state.outfitHistory = normalizeOutfitHistory(value.outfitHistory, state.avatar);
@@ -934,35 +940,101 @@
   }
 
   class DemoForestAdapter {
-    constructor() { this.mode = "demo"; }
+    constructor() { this.mode = "demo"; this.memory = null; }
     async load() {
-      let loaded;
-      try { loaded = normalizeState(JSON.parse(localStorage.getItem(STORAGE_KEY))); }
-      catch { loaded = defaultState(); }
+      const loaded = this.memory ? normalizeState(this.memory) : defaultState();
       this.guestName = loaded.avatar.name;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded));
+      this.memory = JSON.parse(JSON.stringify(loaded));
       return loaded;
     }
     async save(state) {
       // Account names are read-only session data, never copied into the guest save.
       const saved = { ...state, avatar: { ...state.avatar, name: this.guestName || state.avatar.name } };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+      this.memory = JSON.parse(JSON.stringify(saved));
       return state;
     }
   }
 
   class ApiForestAdapter {
-    constructor(token) { this.mode = "api"; this.token = token; }
-    async request(path, options = {}) {
+    constructor(session) {
+      this.mode = "api";
+      this.token = session.token;
+      this.groupId = session.groupId;
+      this.userId = session.userId;
+      this.session = session;
+    }
+    async refreshAccessToken() {
+      const response = await fetch("/api/v1/auth/token/refresh", {
+        credentials: "same-origin", cache: "no-store",
+      });
+      if (!response.ok) throw Object.assign(new Error("FOREST_SESSION_EXPIRED"), { status: 401 });
+      const payload = await response.json();
+      if (!payload.access_token) throw Object.assign(new Error("FOREST_SESSION_EXPIRED"), { status: 401 });
+      this.token = payload.access_token;
+      this.session = { ...this.session, token: this.token, createdAt: Date.now(), expiresAt: Date.now() + 30 * 60 * 1000 };
+      sessionStorage.setItem(FOREST_SESSION_STORAGE_KEY, JSON.stringify(this.session));
+    }
+    async request(path, options = {}, retry = true) {
       const response = await fetch(`/api/v1${path}`, {
         ...options,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.token}` },
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.token}`, ...(options.headers || {}) },
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail?.message || payload.detail || "당근의 숲 API 요청에 실패했습니다.");
+      if (response.status === 401 && retry) {
+        await this.refreshAccessToken();
+        return this.request(path, options, false);
+      }
+      const payload = response.status === 204 ? {} : await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const code = response.status === 401 ? "FOREST_SESSION_EXPIRED" : response.status === 403 ? "FOREST_FORBIDDEN" : null;
+        const message = code || payload.detail?.message || payload.detail || "당근의 숲 API 요청에 실패했습니다.";
+        throw Object.assign(new Error(message), { status: response.status });
+      }
       return payload.data ?? payload;
     }
+    catalog() { return this.request("/forest/catalog"); }
+    wallet() { return this.request("/wallet"); }
+    shopItems() { return this.request("/inventory-items"); }
+    inventory() { return this.request("/inventory"); }
+    avatar() { return this.request("/avatar"); }
     loadForest(groupId) { return this.request(`/forest/spaces/${groupId}`); }
+    createForest(groupId) {
+      return this.request("/forest/spaces", { method: "POST", body: JSON.stringify({ group_id: groupId, name: "당근의 숲" }) });
+    }
+    async load() {
+      let forest;
+      try { forest = await this.loadForest(this.groupId); }
+      catch (error) {
+        if (error.status !== 404) throw error;
+        forest = await this.createForest(this.groupId);
+      }
+      const [catalog, wallet, shop, inventory, avatar] = await Promise.all([
+        this.catalog(), this.wallet(), this.shopItems(), this.inventory(), this.avatar(),
+      ]);
+      const loaded = defaultState();
+      loaded.avatar.name = forest.me?.display_name || loaded.avatar.name;
+      loaded.carrots = Number(wallet.carrot_balance ?? forest.me?.carrot_balance ?? loaded.carrots);
+      applyForestHome(loaded, forest, this.userId);
+      const ownedCodes = (inventory.items || []).map((item) => item.code)
+        .concat(Array.isArray(forest.inventory) ? forest.inventory : [])
+        .filter((code) => itemCatalog[code]);
+      loaded.inventory = [...new Set([...loaded.inventory, ...ownedCodes])];
+      loaded.placed = (forest.objects || []).filter((item) => itemCatalog[item.object_code]).map((item) => ({
+        objectId: item.object_id,
+        code: item.object_code,
+        x: Math.round(Number(item.position_x) / 100 * WORLD_WIDTH),
+        y: Math.round(Number(item.position_y) / 100 * WORLD_HEIGHT),
+        rotation: 0,
+      }));
+      this.serverState = { catalog, shop, avatar, forest };
+      return loaded;
+    }
+    async save(current) {
+      // Movement and visual-only scene state are intentionally ephemeral. The
+      // account, balance, inventory and shared forest remain server-owned.
+      return current;
+    }
     updateAvatar(body) { return this.request("/forest/avatar", { method: "PATCH", body: JSON.stringify(body) }); }
     updateQuest(userChallengeId, logDate, completed) {
       return this.request(`/user-challenges/${userChallengeId}/logs/${logDate}`, {
@@ -973,9 +1045,32 @@
     placeObject(groupId, body) {
       return this.request(`/forest/spaces/${groupId}/objects`, { method: "POST", body: JSON.stringify(body) });
     }
+    removeObject(groupId, objectId) {
+      return this.request(`/forest/spaces/${groupId}/objects/${objectId}`, { method: "DELETE" });
+    }
+    purchase(itemId) { return this.request(`/inventory/items/${itemId}/purchase`, { method: "POST" }); }
+    equipAvatar(itemIds) {
+      return this.request("/avatar/equipment", { method: "PUT", body: JSON.stringify({ item_ids: itemIds }) });
+    }
   }
 
-  const adapter = new DemoForestAdapter();
+  function readForestSession() {
+    try {
+      const forestSession = JSON.parse(sessionStorage.getItem(FOREST_SESSION_STORAGE_KEY));
+      if (!forestSession?.token || !Number.isInteger(Number(forestSession.groupId)) || Number(forestSession.groupId) <= 0) return null;
+      if (Number(forestSession.expiresAt || 0) <= Date.now()) {
+        sessionStorage.removeItem(FOREST_SESSION_STORAGE_KEY);
+        return null;
+      }
+      return { ...forestSession, groupId: Number(forestSession.groupId) };
+    } catch {
+      sessionStorage.removeItem(FOREST_SESSION_STORAGE_KEY);
+      return null;
+    }
+  }
+
+  const forestSession = readForestSession();
+  const adapter = forestSession ? new ApiForestAdapter(forestSession) : new DemoForestAdapter();
   let state = defaultState();
   let placementCode = null;
   let placementDraft = null;
@@ -1243,6 +1338,41 @@
   }
   function personalCompleted() { return state.challengePlan?.onboarded ? activeQuestIds().filter((id) => state.quests[id]).length : 0; }
   function groupCompleted() { return state.members.reduce((total, member) => total + member.completed, 0); }
+  function groupTarget() {
+    const stored = Number(state.groupTarget);
+    if (Number.isFinite(stored) && stored > 0) return stored;
+    return Math.max(SOLO_DAILY_QUEST_TARGET, state.members.reduce((total, member) => total + Math.max(1, Number(member.target) || SOLO_DAILY_QUEST_TARGET), 0));
+  }
+  function applyForestHome(targetState, home, userId) {
+    const members = Array.isArray(home?.members) ? home.members : [];
+    targetState.members = members.map((member) => ({
+      id: String(member.user_id),
+      name: member.display_name || "구성원",
+      completed: Math.max(0, Math.round(Number(member.today_completed) || 0)),
+      target: Math.max(1, Math.round(Number(member.today_target) || SOLO_DAILY_QUEST_TARGET)),
+      me: userId != null && Number(member.user_id) === Number(userId),
+    }));
+    if (!targetState.members.length) {
+      targetState.members = [{ id: "me", name: targetState.avatar.name, completed: 0, target: SOLO_DAILY_QUEST_TARGET, me: true }];
+    } else if (!targetState.members.some((member) => member.me)) {
+      targetState.members.unshift({ id: "me", name: targetState.avatar.name, completed: 0, target: SOLO_DAILY_QUEST_TARGET, me: true });
+    }
+    const serverTarget = Number(home?.today?.target);
+    targetState.groupTarget = Number.isFinite(serverTarget) && serverTarget > 0
+      ? serverTarget : targetState.members.reduce((total, member) => total + member.target, 0);
+    targetState.rewardClaimed = Boolean(home?.today?.group_reward_claimed);
+  }
+  async function syncForestGroup() {
+    if (adapter.mode !== "api" || document.hidden) return;
+    try {
+      const home = await adapter.loadForest(adapter.groupId);
+      applyForestHome(state, home, adapter.userId);
+      renderGroup();
+    } catch (error) {
+      if ([401, 403].includes(error?.status)) showForestAccessError(error);
+      else console.error("forest group sync failed", error);
+    }
+  }
   async function persist(message = null) {
     await adapter.save(state);
     updateProfileUI();
@@ -1904,7 +2034,7 @@
   }
 
   function projectMapLabels() {
-    [[".home-label", 205, 62], [".garden-label", 610, 62], ["#wisdom-spring-sign", WISDOM_SPRING_SIGN.x, WISDOM_SPRING_SIGN.y]].forEach(([selector, x, y]) => {
+    [[".home-label", 205, 62], [".garden-label", 610, 62]].forEach(([selector, x, y]) => {
       const label = $(selector);
       if (!label?.style) return;
       const point = window.ForestCamera?.worldToScreen(x, y) || { x: x / WORLD_WIDTH, y: y / WORLD_HEIGHT };
@@ -2097,7 +2227,7 @@
     if (distanceTo(WORLD_MEMORY_CAMERA.x, WORLD_MEMORY_CAMERA.y) < 78) return "memory_camera";
     if (distanceTo(218, 238) < 62) return "home";
     if (distanceTo(612, 246) < 72) return "garden";
-    if (distanceTo(WISDOM_SPRING_SIGN.x, WISDOM_SPRING_SIGN.y) < 72) return "wisdom_spring";
+    if (distanceTo(WISDOM_SPRING.x, WISDOM_SPRING.y) < 72) return "wisdom_spring";
     return null;
   }
 
@@ -2377,20 +2507,29 @@
       ? quests.map((quest) => `<label class="quest-item"><input type="checkbox" data-quest="${quest.id}" ${state.quests[quest.id] ? "checked" : ""}><span class="quest-icon" aria-hidden="true">${quest.icon}</span><span class="quest-copy"><em>${quest.category}</em><strong>${quest.title}</strong><small>${quest.description}</small></span><b class="quest-reward">+${quest.reward} 🥕</b></label>`).join("")
       : '<div class="quest-empty"><span aria-hidden="true">🌱</span><strong>첫 챌린지를 준비해 주세요</strong><p>이동 가능 확인부터 챌린지 방식 선택까지 마치면 오늘의 퀘스트 3개가 생성됩니다.</p></div>';
     const completed = personalCompleted();
-    state.members.find((member) => member.me).completed = completed;
+    const meMember = state.members.find((member) => member.me);
+    if (meMember && adapter.mode !== "api") meMember.completed = completed;
     $("#personal-progress").textContent = `${completed}/3`;
     $("#heading-personal-progress").textContent = `${completed} / 3`;
   }
 
   function renderGroup() {
     const completed = groupCompleted();
-    $("#group-progress").textContent = `${completed}/15`;
-    $("#heading-group-progress").textContent = `${completed} / 15`;
+    const target = groupTarget();
+    $("#group-progress").textContent = `${completed}/${target}`;
+    $("#heading-group-progress").textContent = `${completed} / ${target}`;
     const progressbar = $(".progress-track[role='progressbar']");
     progressbar.setAttribute("aria-valuenow", String(completed));
-    $("#group-progress-bar").style.width = `${completed / 15 * 100}%`;
-    $("#group-remaining").textContent = completed >= 15 ? "공동 보상까지 0개 남았어요." : `공동 보상까지 ${15 - completed}개 남았어요.`;
-    $("#member-list").innerHTML = state.members.map((member) => `<li><canvas class="member-avatar-face" width="48" height="48" data-member-face="${member.id}" aria-hidden="true"></canvas><strong>${member.name}</strong><span class="member-progress">${member.completed}/3</span></li>`).join("");
+    progressbar.setAttribute("aria-valuemax", String(target));
+    $("#group-progress-bar").style.width = `${Math.min(100, completed / target * 100)}%`;
+    $("#group-remaining").textContent = completed >= target ? "공동 보상까지 0개 남았어요." : `공동 보상까지 ${target - completed}개 남았어요.`;
+    $("#member-list").innerHTML = state.members.map((member) => {
+      const profileImage = memberProfileImage(member);
+      const avatar = profileImage
+        ? `<img class="member-avatar-face" src="${profileImage}" alt="${member.name} 프로필">`
+        : `<canvas class="member-avatar-face" width="48" height="48" data-member-face="${member.id}" aria-hidden="true"></canvas>`;
+      return `<li>${avatar}<strong>${member.name}</strong><span class="member-progress">${member.completed}/${member.target || SOLO_DAILY_QUEST_TARGET}</span></li>`;
+    }).join("");
     drawMemberFaceThumbnails();
     const rewardButton = $("#reward-button");
     const v2Plan = window.ForestChallengeV2?.enabled ? window.ForestChallengeV2.plan : null;
@@ -2403,10 +2542,26 @@
       $("#group-reward-help").textContent = opened ? "오늘의 보상 상자를 열었어요." : ready ? "지금 바로 보상 상자를 열어 보세요." : "오늘의 퀘스트 3개를 완료하면 바로 열 수 있어요.";
       return;
     }
-    rewardButton.disabled = completed < 15 || state.rewardClaimed;
+    rewardButton.disabled = completed < target || state.rewardClaimed;
     rewardButton.textContent = state.rewardClaimed ? "오늘의 일일 보상 받음" : "일일 보상 받기";
-    $("#group-reward-help").textContent = state.rewardClaimed ? "오늘의 보상 상자를 열었어요." : completed >= 15 ? "지금 바로 보상 상자를 열어 보세요." : `공동 보상까지 ${15 - completed}개 남았어요.`;
+    $("#group-reward-help").textContent = state.rewardClaimed ? "오늘의 보상 상자를 열었어요." : completed >= target ? "지금 바로 보상 상자를 열어 보세요." : `공동 보상까지 ${target - completed}개 남았어요.`;
     $("#group-goal-memo").value = state.groupGoalMemo || "";
+  }
+
+  function memberProfileImage(member) {
+    if (member?.me) return null;
+    const normalizedName = String(member?.name || "");
+    const roleById = { m2: "moon_mage", m3: "inventor", m4: "forest_witch", m5: "knight" };
+    const roleByName = [
+      ["빛샘", "moon_mage"],
+      ["수인", "forest_witch"],
+      ["준혁", "inventor"],
+      ["세준", "knight"],
+    ];
+    const role = roleById[member?.id] || roleByName.find(([name]) => normalizedName.includes(name))?.[1];
+    if (role) return MEMBER_PROFILE_IMAGES[role];
+    const guestIndex = state.members.filter((candidate) => !candidate.me).findIndex((candidate) => candidate.id === member?.id);
+    return Object.values(MEMBER_PROFILE_IMAGES)[guestIndex] || null;
   }
 
   function memberAvatarFor(member) {
@@ -3064,6 +3219,10 @@
   }
 
   function startPredictionFlow() {
+    if (typeof adapter !== "undefined" && adapter.mode !== "api") {
+      window.location.assign("/?auth=login&returnTo=forest");
+      return;
+    }
     openChallengeFlow();
   }
 
@@ -3253,8 +3412,6 @@
     const guide = ragGuideFor(question);
     $("#forest-rag-result").innerHTML = `<strong>${guide.answer}</strong><a href="${guide.url}" target="_blank" rel="noopener">검색 근거 · ${guide.source}</a><small>일반적인 건강교육 정보이며 진단·처방이 아닙니다.</small>`;
   });
-  $("#open-wisdom-spring")?.addEventListener("click", openWisdomSpringChat);
-
   $("#group-goal-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     state.groupGoalMemo = $("#group-goal-memo").value.trim().slice(0, 80);
@@ -3520,7 +3677,7 @@
       await persist("일일 보상 상자를 열었습니다!");
       return;
     }
-    if (groupCompleted() < 15 || state.rewardClaimed) return;
+    if (groupCompleted() < groupTarget() || state.rewardClaimed) return;
     const reward = deterministicReward();
     state.rewardClaimed = true;
     state.carrots += 50;
@@ -3540,13 +3697,24 @@
 
   let chatFocusTimer = 0;
   function appendChatMessage(authorName, message, className = "") {
-    const row = document.createElement("p");
-    if (className) row.className = className;
+    const isBot = authorName === "간당이";
+    const row = document.createElement("div");
+    row.className = isBot ? "chat-row chat-row-bot" : "chat-row chat-row-user";
+    if (isBot) {
+      const avatar = document.createElement("img");
+      avatar.className = "chat-avatar";
+      avatar.src = WISDOM_CHAT_AVATAR_SRC;
+      avatar.alt = "";
+      row.append(avatar);
+    }
+    const bubble = document.createElement("p");
+    if (className) bubble.className = className;
     const author = document.createElement("strong");
     const copy = document.createElement("span");
     author.textContent = authorName;
     copy.textContent = message;
-    row.append(author, copy);
+    bubble.append(author, copy);
+    row.append(bubble);
     $("#chat-messages").append(row);
     while ($("#chat-messages").children.length > 50) $("#chat-messages").firstElementChild.remove();
     $("#chat-messages").scrollTop = $("#chat-messages").scrollHeight;
@@ -3587,25 +3755,36 @@
   }
 
   function wisdomFallbackAnswer(question) {
-    const lower = question.toLowerCase();
-    if (question.includes("물") || question.includes("음료") || question.includes("당")) {
-      return "단 음료를 물이나 덜 단 음료로 바꾸는 건 당류 섭취를 줄이는 쉬운 시작점이에요. 오늘 한 잔부터 바꿔 보고, 당뇨병이나 복약 중인 상황은 의료진 안내를 우선해 주세요.\n출처: 챌린지 선정 근거, 식약처·질병관리청 일반 건강지침";
-    }
-    if (question.includes("혈압") || question.includes("혈당") || question.includes("검진")) {
+    if (question.includes("혈압") || question.includes("혈당") || question.includes("검진") || question.includes("수치")) {
       return "혈압·혈당 같은 건강 수치는 같은 시간대와 비슷한 조건에서 확인해야 변화를 비교하기 쉬워요. 수치가 높거나 증상이 있으면 앱 답변으로 판단하지 말고 의료기관에 문의해 주세요.\n출처: 챌린지 선정 근거, 질병관리청 건강수치 확인 지침";
     }
     if (question.includes("걷") || question.includes("운동") || question.includes("식후")) {
       return "가벼운 걷기는 활동량을 늘리는 부담 낮은 방법이에요. 처음에는 짧게 시작하고, 통증·어지럼·심한 숨참이 있으면 멈추는 게 좋아요.\n출처: 챌린지 선정 근거, 대한당뇨병학회·질병관리청 신체활동 자료";
     }
+    if (question.includes("물") || question.includes("음료") || question.includes("당류") || question.includes("단맛") || question.includes("단 것")) {
+      return "단 음료를 물이나 덜 단 음료로 바꾸는 건 당류 섭취를 줄이는 쉬운 시작점이에요. 오늘 한 잔부터 바꿔 보고, 당뇨병이나 복약 중인 상황은 의료진 안내를 우선해 주세요.\n출처: 챌린지 선정 근거, 식약처·질병관리청 일반 건강지침";
+    }
     return "건강한 생활습관은 걷기, 규칙적인 식사, 덜 달게 마시기, 정기적인 건강수치 확인처럼 매일 기록하기 쉬운 행동부터 시작할 수 있어요. 이 답변은 일반 건강교육 정보라서 개인 진단이나 처방을 대신하지 않아요.\n출처: RAG 준비 문서, 공공기관 일반 건강교육 자료";
+  }
+
+  async function fetchWisdomAuthToken() {
+    if (typeof adapter !== "undefined" && adapter.mode === "api" && adapter.token) return adapter.token;
+    try {
+      const response = await fetch("/api/v1/auth/token/refresh", { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) return null;
+      const payload = await response.json();
+      return typeof payload?.access_token === "string" && payload.access_token ? payload.access_token : null;
+    } catch { return null; }
   }
 
   async function askWisdomSpring(question) {
     const pending = appendChatMessage("간당이", "근거를 찾아보고 있어요...", "is-pending");
     try {
+      const token = await fetchWisdomAuthToken();
+      if (!token) throw new Error("로그인 정보를 확인하지 못했어요.");
       const response = await fetch("/api/v1/health-education/questions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         credentials: "same-origin",
         cache: "no-store",
         body: JSON.stringify({ question }),
@@ -3616,11 +3795,11 @@
       const citations = Array.isArray(data.citations) && data.citations.length
         ? `\n출처: ${data.citations.slice(0, 3).map((item) => item.title || item.url || item.document_id).filter(Boolean).join(", ")}`
         : "";
-      pending.className = "";
-      pending.children[1].textContent = `${data.answer || wisdomFallbackAnswer(question)}\n${data.medical_notice || "일반 건강교육 정보이며 개인 진단·처방을 대신하지 않습니다."}${citations}`;
+      pending.querySelector("p").className = "";
+      pending.querySelector("span").textContent = `${data.answer || wisdomFallbackAnswer(question)}\n${data.medical_notice || "일반 건강교육 정보이며 개인 진단·처방을 대신하지 않습니다."}${citations}`;
     } catch {
-      pending.className = "";
-      pending.children[1].textContent = `${wisdomFallbackAnswer(question)}\n일반 건강교육 정보이며 개인 진단·처방을 대신하지 않습니다.`;
+      pending.querySelector("p").className = "";
+      pending.querySelector("span").textContent = `${wisdomFallbackAnswer(question)}\n일반 건강교육 정보이며 개인 진단·처방을 대신하지 않습니다.`;
     }
     $("#chat-messages").scrollTop = $("#chat-messages").scrollHeight;
   }
@@ -4075,11 +4254,6 @@
     if (chatMode === "wisdom") askWisdomSpring(message);
   });
 
-  $("#wisdom-spring-sign")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    openWisdomSpringChat();
-  });
-
   $("#music-toggle").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     musicEngine ||= new CozyForestMusic();
@@ -4181,6 +4355,22 @@
   }
 
   window.CarrotForestAdapters = { DemoForestAdapter, ApiForestAdapter };
+  function showForestAccessError(error) {
+    const expired = error?.message === "FOREST_SESSION_EXPIRED" || error?.status === 401;
+    const forbidden = error?.message === "FOREST_FORBIDDEN" || error?.status === 403;
+    if (expired) sessionStorage.removeItem(FOREST_SESSION_STORAGE_KEY);
+    const message = expired
+      ? "로그인 시간이 끝났습니다. 간당간당에서 다시 로그인해 주세요."
+      : forbidden
+        ? "선택한 공동 챌린지의 당근의 숲에 접근할 수 없습니다."
+        : error?.message || "당근의 숲 정보를 불러오지 못했습니다.";
+    setStatus(message);
+    const entryButton = $("#start-prediction-flow");
+    if (entryButton) {
+      entryButton.textContent = expired ? "다시 로그인하기" : forbidden ? "다른 숲 선택하기" : "간당간당으로 돌아가기";
+      entryButton.onclick = () => window.location.assign(expired ? "/?auth=login&returnTo=forest" : "/");
+    }
+  }
   adapter.load().then(async (loaded) => {
     await window.LpcAvatarEngine?.ready();
     // One complete PNG per object: never reveal legacy cropped furniture while loading.
@@ -4189,6 +4379,7 @@
     const params = new URLSearchParams(window.location.search);
     const localReset = localDemoOrigin && params.get("resetToday") === "1";
     state = localReset ? resetTodayProgress(loaded) : loaded;
+    window.carrotForestStateSnapshot = state;
     window.carrotForestHomeRecordPlaying = state.homeRecordPlaying;
     if (localReset) {
       adapter.save(state);
@@ -4196,6 +4387,10 @@
       window.history.replaceState({}, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
     }
     renderAll();
+    if (adapter.mode === "api") {
+      window.setInterval(() => void syncForestGroup(), GROUP_SYNC_INTERVAL_MS);
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) void syncForestGroup(); });
+    }
     window.ForestProfile.watch(applyAccountNickname);
     setStatus(localReset ? "오늘의 과업과 공동 진행, 보물상자 수령 상태를 초기화했습니다." : "당근의 숲이 준비되었습니다. 오늘의 퀘스트부터 시작해 보세요.");
     window.requestAnimationFrame(() => document.documentElement.classList.add("forest-script-ready"));
@@ -4205,6 +4400,6 @@
   }).catch((error) => {
     console.error(error);
     document.documentElement.classList.add("forest-script-ready");
-    setStatus("일부 자산을 불러오지 못했습니다. 새로고침해 주세요.");
+    showForestAccessError(error);
   });
 })();

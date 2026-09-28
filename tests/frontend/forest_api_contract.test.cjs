@@ -4,10 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '../..');
-const app = fs.readFileSync(path.join(root, 'src/frontend/app.js'), 'utf8');
+const app = fs.readFileSync(path.join(root, 'src/frontend/intro-retro-app.js'), 'utf8');
 const game = fs.readFileSync(path.join(root, 'src/frontend/forest-game.js'), 'utf8');
 const phaser = fs.readFileSync(path.join(root, 'src/frontend/forest-phaser.js'), 'utf8');
-const html = fs.readFileSync(path.join(root, 'src/frontend/index.html'), 'utf8');
+const html = fs.readFileSync(path.join(root, 'src/frontend/intro-retro.html'), 'utf8');
 
 test('forest entry requires an authenticated group handoff', () => {
   assert.match(html, /id="forest-entry-dialog"/);

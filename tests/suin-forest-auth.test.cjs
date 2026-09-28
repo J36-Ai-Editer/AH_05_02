@@ -103,5 +103,8 @@ test('separate same-origin service route preserves the original main page', () =
   const main = fs.readFileSync(path.join(__dirname, '../app/main.py'), 'utf8');
   assert.match(main, /@app\.get\("\/service", include_in_schema=False\)/);
   assert.match(main, /FileResponse\(FRONTEND_DIR \/ "suin" \/ "index\.html"\)/);
-  assert.match(main, /async def home\(\) -> FileResponse:\s+return FileResponse\(FRONTEND_DIR \/ "index\.html"\)/);
+  assert.match(main, /async def home\(/);
+  assert.match(main, /auth: str \| None = Query\(default=None\)/);
+  assert.match(main, /page = "index\.html" if intro == "original" else "intro-retro\.html"/);
+  assert.doesNotMatch(main, /auth in \{"login", "signup"\}/);
 });

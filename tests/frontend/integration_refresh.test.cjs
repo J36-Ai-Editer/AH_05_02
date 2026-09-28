@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../../src/frontend/app.js'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '../../src/frontend/index.html'), 'utf8');
 
 function loadFunctions(names, context = {}) {
   vm.createContext(context);
@@ -51,7 +52,7 @@ function displayContext(today) {
     });
     return nodes.get(id);
   }
-  const context = loadFunctions(['normalizeRiskKey', 'updateResultConfirmation', 'renderPrediction'], {
+  const context = loadFunctions(['normalizeRiskKey', 'normalizeCurrentScreeningRiskKey', 'updateResultConfirmation', 'renderPrediction'], {
     $, nodes, state: { currentScreeningPrediction: today },
     isDemoEnvironment: () => false, normalizeForecastSignal: () => null,
     isPublicRiskDisplayAllowed: prediction => prediction?.result_status === 'approved'
@@ -76,6 +77,17 @@ test('future high does not overwrite today low traffic light', () => {
   assert.equal(context.$('#risk-confirm-card').dataset.risk, 'low');
   assert.match(context.$('#future-risk-category').textContent, /high/);
   assert.match(context.$('#risk-traffic-light')['aria-label'], /현재/);
+});
+
+test('today uses a binary low/high signal while tomorrow retains low/caution/high categories', () => {
+  const todayCard = html.slice(html.indexOf('id="risk-confirm-card"'), html.indexOf('id="future-prediction-result"'));
+  assert.match(todayCard, /data-risk-preview="low"/);
+  assert.match(todayCard, /data-risk-preview="high"/);
+  assert.doesNotMatch(todayCard, /data-risk-preview="caution"|traffic-signal caution/);
+  const context = displayContext(approved('diabetes_current_screening', 'caution'));
+  context.updateResultConfirmation(context.state.currentScreeningPrediction);
+  assert.equal(context.$('#risk-confirm-card').dataset.risk, 'pending');
+  assert.equal(context.normalizeRiskKey(approved('diabetes_incidence', 'caution')), 'caution');
 });
 
 for (const today of [null, { ...approved('diabetes_current_screening', 'high'), result_status: 'development_only' }]) {

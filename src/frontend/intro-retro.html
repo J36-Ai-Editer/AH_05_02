@@ -6,19 +6,19 @@
   <meta name="description" content="미래 당뇨병 발병 위험 선별과 생활습관 챌린지 개발용 서비스">
   <title>간당간당 | 당뇨 생활습관 챌린지</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍀</text></svg>">
-  <link rel="stylesheet" href="/static/intro-retro-base.css?v=20260910-result-signal-grid-restore-v1">
+  <link rel="stylesheet" href="/static/intro-retro-base.css?v=20260920-brand-logo-v1">
   <link rel="stylesheet" href="/static/lifestyle-map.css?v=20260908-tools-heading-v3">
   <link rel="stylesheet" href="/static/education-carousel.css?v=20260908-carousel-clear-v2">
   <script src="/static/education-carousel.js?v=20260908-shared-carousel-v1" defer></script>
   <script src="/static/lifestyle-map.js?v=20260908-body-art-v3" defer></script>
   <link rel="stylesheet" href="/static/retro-intro.css?v=20260910-result-signal-grid-restore-v1">
   <script src="/static/retro-intro.js?v=20260910-result-signal-grid-restore-v1" defer></script>
-  <script src="/static/intro-retro-app.js?v=20260910-result-signal-grid-restore-v1" defer></script>
+  <script src="/static/intro-retro-app.js?v=20260916-home-intro-v2" defer></script>
 </head>
 <body class="intro-mode">
   <a class="skip-link" href="#main">본문으로 바로가기</a>
   <header class="topbar">
-    <a class="brand" id="brand-home" href="/" aria-label="간당간당 홈으로"><span class="brand-mark" aria-hidden="true">+</span> 간당간당</a>
+    <a class="brand" id="brand-home" href="/" aria-label="간당간당 홈으로"><img class="brand-logo" src="/static/assets/gandang-logo-web-v2.png" width="1998" height="787" alt=""></a>
     <nav class="intro-route-nav" aria-label="첫 방문 서비스 안내">
       <button type="button" data-intro-signup>회원정보 입력</button>
       <a href="#story-health">건강정보 입력</a>
@@ -35,7 +35,8 @@
     </nav>
     <nav class="workspace-top-nav" id="workspace-top-nav" aria-label="로그인 후 주요 메뉴" hidden>
       <ol>
-        <li><button type="button" data-top-workspace="home">홈</button></li>
+        <li><button type="button" data-top-intro>홈</button></li>
+        <li><button type="button" data-top-workspace="home">대시보드</button></li>
         <li><button type="button" data-top-step="7">챌린지</button></li>
         <li><button type="button" data-top-workspace="report">리포트</button></li>
         <li><button type="button" data-top-workspace="together">함께하기</button></li>
@@ -537,13 +538,11 @@
           <div class="risk-preview-controls" id="risk-preview-controls" aria-label="현재 위험 신호 화면 확인" hidden>
             <span>화면 확인용</span>
             <button type="button" data-risk-preview="low">낮음 보기</button>
-            <button type="button" data-risk-preview="caution">주의 보기</button>
             <button type="button" data-risk-preview="high">높음 보기</button>
           </div>
           <div class="current-risk-signal-body">
-            <div class="risk-traffic-light" id="risk-traffic-light" role="img" aria-label="현재 위험 신호 결과 준비 중">
+            <div class="risk-traffic-light binary-risk-traffic-light" id="risk-traffic-light" role="img" aria-label="현재 위험 신호 결과 준비 중">
               <span class="traffic-signal high"><i aria-hidden="true"><img src="/static/assets/hyeoldangi-face-high.png?v=20260902-high-face-v2" alt=""></i><b>높음</b></span>
-              <span class="traffic-signal caution"><i aria-hidden="true"><img src="/static/assets/hyeoldangi-face-caution.png" alt=""></i><b>주의</b></span>
               <span class="traffic-signal low"><i aria-hidden="true"><img src="/static/assets/hyeoldangi-face-low.png" alt=""></i><b>낮음</b></span>
             </div>
           </div>

@@ -4,7 +4,6 @@
   if (!window.Phaser || !document.getElementById("phaser-world")) return;
   window.ForestMonsterPresence = false;
 
-  const STORAGE_KEY = "gandang-carrot-forest-demo-v1";
   const ATMOSPHERE_KEY = "gandang-carrot-forest-atmosphere-v1";
   const WORLD = { width: 768, height: 512 };
   // Phaser 3.90 has no game-level resolution option. Render into a denser
@@ -78,7 +77,7 @@
   };
 
   function storedState() {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; }
+    return window.carrotForestStateSnapshot || {};
   }
 
   function normalizedAvatar(source = {}) {
@@ -159,6 +158,7 @@
     preload() {
       this.load.image("world-bg", "/static/assets/carrot-forest-world-v9.png?v=20260910-1");
       this.load.image("home-bg", "/static/assets/carrot-forest-home-v5.png?v=20260910-3");
+      this.load.image("home-record-player", "/static/assets/home-record-player-cottage-v1.png?v=20260920-1");
       this.load.image(window.ForestGarden.assets.background.key, window.ForestGarden.assets.background.url);
       this.load.image(window.ForestGarden.assets.carrot.key, window.ForestGarden.assets.carrot.url);
       this.load.spritesheet("lpc-pets", "/static/assets/carrot-forest-lpc-pets-v1.png?v=20260831-1", { frameWidth: 32, frameHeight: 32 });
@@ -434,11 +434,14 @@
 
     createHomeRecordPlayer() {
       const { x, y } = HOME_RECORD_PLAYER;
-      const note = this.add.text(28, -58, "♪", {
+      const furniture = this.add.image(0, 0, "home-record-player")
+        .setOrigin(.5, .5)
+        .setDisplaySize(68, 90);
+      const note = this.add.text(30, -52, "♪", {
         resolution: TEXT_RESOLUTION,
         fontFamily: "Pretendard, Noto Sans KR, sans-serif", fontSize: "14px", fontStyle: "bold", color: "#f6d795", stroke: "#775332", strokeThickness: 2,
       }).setOrigin(.5).setVisible(false);
-      this.recordPlayerActor = this.add.container(x, y, [note]).setDepth(y + 2).setVisible(true);
+      this.recordPlayerActor = this.add.container(x, y, [furniture, note]).setDepth(y + 2).setVisible(true);
       this.recordPlayerNote = note;
       this.syncHomeRecordPlayer(this.homeRecordPlaying);
     }
@@ -1498,7 +1501,7 @@
       if (this.memoryCapturing) { this.memoryController?.update(); return; }
       if (this.mountTransitioning) return;
       if (this.sceneName === "home" && this.homeRecordPlaying) {
-        this.recordPlayerNote?.setY(-112 + Math.sin(time / 420) * 2).setAlpha(.8 + Math.sin(time / 420) * .15);
+        this.recordPlayerNote?.setY(-52 + Math.sin(time / 420) * 2).setAlpha(.8 + Math.sin(time / 420) * .15);
       }
       this.updateWorldAtmosphere(time);
       this.updatePlacedObjectMotion(time);

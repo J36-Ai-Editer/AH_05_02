@@ -17,7 +17,6 @@ test('MVP excludes survival chart, scenarios and research API callers, retaining
   assert.doesNotMatch(html, /id="(?:risk-forecast-panel|age-risk-chart|scenario-comparison-title|uncertainty-panel)"/);
   assert.match(html, /id="risk-confirm-card"/);
   assert.match(html, /id="future-risk-category"/);
-  assert.match(html, /id="future-risk-horizon"/);
   assert.doesNotMatch(source, /\/research\/models\/|tryRunJunhyukModelDemo|future_forecast/);
 });
 test('legacy local preview is a clearly labelled two-model fixture and performs no API calls', () => {

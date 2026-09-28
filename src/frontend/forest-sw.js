@@ -1,11 +1,11 @@
 "use strict";
 
 const CACHE_PREFIX = "gandang-carrot-forest-pwa-";
-const CACHE_NAME = "gandang-carrot-forest-pwa-v178-16";
+const CACHE_NAME = "gandang-carrot-forest-pwa-v181-wisdom-lp";
 const CORE_SHELL = [
   "/forest",
   "/manifest.webmanifest",
-  "/static/forest-game.css?v=20260910-5",
+  "/static/forest-game.css?v=20260920-wisdom-lp-v1",
   "/static/forest-atmosphere.css?v=20260903-2",
   "/static/forest-atmosphere.js?v=20260907-4",
   "/static/forest-hud.js?v=20260908-4",
@@ -20,9 +20,9 @@ const CORE_SHELL = [
   "/static/forest-riverduck-art.js?v=20260910-2",
   "/static/forest-memories.js?v=20260910-2",
   "/static/forest-garden.js?v=20260908-1",
-  "/static/forest-phaser.js?v=20260910-9",
+  "/static/forest-phaser.js?v=20260920-wisdom-lp-v1",
   "/static/forest-profile.js?v=20260907-1",
-  "/static/forest-game.js?v=20260910-11",
+  "/static/forest-game.js?v=20260920-wisdom-lp-v1",
   "/static/challenge-v2.js?v=2.1.10",
   "/static/challenge-v2.css?v=2.1.3",
   "/static/suin/design-tokens.css?v=20260908-1",
@@ -53,7 +53,9 @@ const MEDIA_ASSETS = [
   "/static/assets/challenge-compost-team-v171.webp?v=20260908-1",
   "/static/assets/challenge-weeding-team-v171.webp?v=20260908-1",
   "/static/assets/gandangi-wisdom-guide.png?v=20260910-1",
+  "/static/assets/gandangi-wisdom-guide-chat-v1.png?v=20260916-1",
   "/static/assets/wisdom-spring-chat-banner-v1.png?v=20260910-1",
+  "/static/assets/home-record-player-cottage-v1.png?v=20260920-1",
   "/static/assets/town-pro-sensory-cc0.mp3",
   "/static/assets/home-drowsy-evening-cc0.wav",
   "/static/assets/avatar-forget-me-not-cc0.ogg",

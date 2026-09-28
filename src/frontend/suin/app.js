@@ -366,7 +366,6 @@ const jobStatusLabels = {
 };
 const riskCategoryLabels = {
   low: "낮음",
-  moderate: "주의",
   caution: "주의",
   high: "높음",
   diabetes_screening_advised: "높음",
@@ -581,6 +580,11 @@ function syncTopNavigation() {
   if (guestNav) guestNav.hidden = isLoggedIn;
   if (workspaceNav) workspaceNav.hidden = !showWorkspaceNav;
   if (onboardingNav) onboardingNav.hidden = !showOnboardingNav;
+  $$('[data-top-intro]').forEach((button) => {
+    const selected = state.step === 1;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-current", selected ? "page" : "false");
+  });
   $$("[data-top-workspace]").forEach((button) => {
     const selected = state.step === 8 && state.activeWorkspace === button.dataset.topWorkspace;
     button.classList.toggle("active", selected);
@@ -1530,8 +1534,15 @@ function renderPredictionStatus(status, options = {}) {
 function normalizeRiskKey(prediction = state.prediction) {
   const raw = prediction?.risk_category || prediction?.risk_category_label || "low";
   if (raw === "high" || raw === "diabetes_screening_advised" || raw === "높음") return "high";
-  if (raw === "moderate" || raw === "caution" || raw === "주의") return "caution";
+  if (raw === "caution" || raw === "주의") return "caution";
   return "low";
+}
+
+function normalizeCurrentScreeningRiskKey(prediction = state.currentScreeningPrediction) {
+  const raw = prediction?.risk_category || prediction?.risk_category_label;
+  if (prediction?.screening_signal_detected === true || raw === "high" || raw === "diabetes_screening_advised" || raw === "높음") return "high";
+  if (prediction?.screening_signal_detected === false || raw === "low" || raw === "낮음") return "low";
+  return null;
 }
 
 function isPublicRiskDisplayAllowed(prediction = {}) {
@@ -1588,7 +1599,7 @@ function getCurrentHealthSignal(checkup = state.currentScreeningPrediction || st
   const isApproved = isPublicRiskDisplayAllowed(checkup);
   if (isApproved) {
     return {
-      category_label: forecastSignalLabel(normalizeRiskKey(checkup)),
+      category_label: forecastSignalLabel(normalizeCurrentScreeningRiskKey(checkup)),
       summary: checkup.summary || checkup.guidance || "현재 위험 신호 선별 결과를 확인해 주세요.",
     };
   }
@@ -1665,19 +1676,13 @@ function updateResultConfirmation(prediction = state.currentScreeningPrediction 
   const previewRisk = isDemoEnvironment() && prediction?.preview_only === true
     ? normalizeForecastSignal(prediction.preview_signal_level)
     : null;
-  const risk = isApprovedRisk ? normalizeRiskKey(prediction) : previewRisk || "pending";
+  const risk = isApprovedRisk ? normalizeCurrentScreeningRiskKey(prediction) || "pending" : (["low", "high"].includes(previewRisk) ? previewRisk : "pending");
   const content = {
     low: {
       label: "낮음",
       next: "다음: 챌린지 보기",
       mascot: "/static/suin/assets/hyeoldangi-risk-low.png",
       mascotAlt: "좋은 습관을 이어가자고 응원하는 간당간당 캐릭터 혈당이",
-    },
-    caution: {
-      label: "주의",
-      next: "다음: 챌린지 보기",
-      mascot: "/static/suin/assets/hyeoldangi-risk-caution.png",
-      mascotAlt: "확인할 요인을 살펴보자고 안내하는 간당간당 캐릭터 혈당이",
     },
     high: {
       label: "높음",
@@ -2179,10 +2184,10 @@ function updateLifestyleSummary() {
   $("#summary-metabolic-action").textContent = smokingStatus === "current" || drinker === "예"
     ? "현재 기록을 바탕으로 바꾸기 쉬운 생활습관부터 점검해요."
     : "이 정보는 위험 판정이 아니라 생활습관 점검을 위한 참고 신호예요.";
-  $("#summary-checkup").textContent = normalizeRiskKey() === "high"
+  $("#summary-checkup").textContent = normalizeCurrentScreeningRiskKey() === "high"
     ? "현재 위험 신호가 높음으로 확인되었어요."
     : "현재 위험 신호와 관계없이 정기적인 확인이 필요해요.";
-  $("#summary-checkup-action").textContent = normalizeRiskKey() === "high"
+  $("#summary-checkup-action").textContent = normalizeCurrentScreeningRiskKey() === "high"
     ? "챌린지보다 검사·의료기관 상담 안내를 먼저 확인해 주세요."
     : "정기 검진과 생활습관 기록을 이어가 주세요.";
 }
@@ -3749,6 +3754,11 @@ $(".forest-shortcut")?.addEventListener("click", (event) => {
   showStep(2);
   showAuthMode("login", { context: "login" });
 });
+$$('[data-top-intro]').forEach((button) => button.addEventListener("click", () => {
+  document.body.classList.remove("account-mode");
+  if (window.location.pathname !== "/" || window.location.search || window.location.hash) window.history.replaceState({}, "", "/");
+  showStep(1, { recordHistory: false });
+}));
 $$("[data-top-workspace]").forEach((button) => button.addEventListener("click", () => {
   if (!state.token) {
     showStep(2);
@@ -4988,7 +4998,7 @@ function renderMvpResultPreview() {
     result_status: "development_only", promotion_status: "development_only",
     display_allowed: false, operational_model_activated: false,
   });
-  state.currentScreeningPrediction = fixture("diabetes_current_screening");
+  state.currentScreeningPrediction = { ...fixture("diabetes_current_screening"), preview_signal_level: "high" };
   state.prediction = fixture("diabetes_incidence");
   state.predictionId = state.prediction.prediction_id;
   state.developmentPreviewRiskCategory = "caution";
