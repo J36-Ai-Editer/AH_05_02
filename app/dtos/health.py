@@ -118,13 +118,25 @@ class PredictionJobCreateRequest(BaseModel):
         return self
 
 
-class ChallengeCycleCreateRequest(BaseModel):
+class PersonalChallengePreferences(BaseModel):
+    focus: Literal["balanced", "diet", "activity"] = "balanced"
+    difficulty: Literal["easy", "moderate", "advanced"] = "easy"
+    context: Literal["any", "home", "work", "dining_out"] = "any"
+    mobility: Literal["unspecified", "comfortable", "limited"] = "unspecified"
+    sweet_drinks: Literal["unspecified", "often", "rarely"] = "unspecified"
+    use_health_record: bool = False
+    use_activity_history: bool = False
+
+
+class PersonalChallengeRecommendationRequest(PersonalChallengePreferences):
+    rotation: int = Field(default=0, ge=0, le=1_000_000)
+
+
+class ChallengeCycleCreateRequest(PersonalChallengePreferences):
     start_date: date
     challenge_ids: list[int] = Field(min_length=1, max_length=3)
     prediction_id: int | None = Field(default=None, gt=0)
-    catalog_version: Literal["evidence-v3"] | None = None
-    focus: Literal["balanced", "diet", "activity"] = "balanced"
-    difficulty: Literal["easy", "moderate", "advanced"] = "easy"
+    catalog_version: Literal["evidence-v3", "personal-v4"] | None = None
 
     @model_validator(mode="after")
     def unique_challenges(self) -> ChallengeCycleCreateRequest:

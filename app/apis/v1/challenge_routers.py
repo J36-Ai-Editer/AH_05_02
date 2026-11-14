@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 
 from app.apis.responses import envelope
 from app.dependencies.security import get_request_user
@@ -11,6 +11,7 @@ from app.dtos.health import (
     ChallengeCycleCreateRequest,
     ChallengeCycleStatusRequest,
     ChallengeLogUpsertRequest,
+    PersonalChallengeRecommendationRequest,
 )
 from app.models.users import User
 from app.repositories.health_repository import HealthRepository
@@ -44,7 +45,7 @@ async def create_v3_photo_verification(
 
 @challenge_router.get("/challenges")
 async def list_challenges(
-    catalog_version: Literal["evidence-v3"] | None = Query(default=None),
+    catalog_version: Literal["evidence-v3", "personal-v4"] | None = Query(default=None),
 ) -> dict[str, object]:
     items = await ChallengeService().ensure_catalog(catalog_version)
     return envelope({"items": [challenge_payload(item) for item in items]})
@@ -62,6 +63,16 @@ async def challenge_recommendations(
     return envelope(
         await ChallengeService().recommendations(user, prediction_id, catalog_version, focus, difficulty, rotation)
     )
+
+
+@challenge_router.post("/challenge-recommendations/personal")
+async def personal_challenge_recommendations(
+    request: PersonalChallengeRecommendationRequest,
+    response: Response,
+    user: Annotated[User, Depends(get_request_user)],
+) -> dict[str, object]:
+    response.headers["Cache-Control"] = "no-store"
+    return envelope(await ChallengeService().personal_recommendations(user, request))
 
 
 @challenge_router.post("/challenge-cycles", status_code=status.HTTP_201_CREATED)
@@ -102,6 +113,20 @@ async def update_challenge_cycle_status(
     service = ChallengeService()
     cycle = await service.stop_cycle(user, cycle_id, request.reason)
     return envelope(await service.cycle_payload(cycle, user.id))
+
+
+@challenge_router.get("/challenge-rewards/daily/{reward_date}")
+async def daily_challenge_reward(
+    reward_date: date, user: Annotated[User, Depends(get_request_user)]
+) -> dict[str, object]:
+    return envelope(await ChallengeService().daily_reward_status(user, reward_date))
+
+
+@challenge_router.post("/challenge-rewards/daily/{reward_date}")
+async def claim_daily_challenge_reward(
+    reward_date: date, user: Annotated[User, Depends(get_request_user)]
+) -> dict[str, object]:
+    return envelope(await ChallengeService().claim_daily_reward(user, reward_date))
 
 
 @challenge_router.put("/user-challenges/{user_challenge_id}/logs/{log_date}")
