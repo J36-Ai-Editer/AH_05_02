@@ -6,7 +6,13 @@ from fastapi import HTTPException, UploadFile, status
 from tortoise.transactions import in_transaction
 
 from app.core import config
-from app.dtos.health import ChallengeCycleCreateRequest, ChallengeLogUpsertRequest, ChallengeVerificationCreateRequest
+from app.dtos.health import (
+    ChallengeCycleCreateRequest,
+    ChallengeLogUpsertRequest,
+    ChallengeVerificationCreateRequest,
+    PersonalChallengePreferences,
+    PersonalChallengeRecommendationRequest,
+)
 from app.models.health import Challenge, ChallengeCycle, UserChallenge
 from app.models.users import User
 from app.repositories.game_repository import GameRepository
@@ -20,6 +26,19 @@ from app.services.challenge_catalog import (
     recommendation_policy,
 )
 from app.services.challenge_proofs import challenge_today
+from app.services.personal_challenge_catalog import (
+    DOMAINS,
+    PERSONAL_CATALOG,
+    PERSONAL_CATALOG_VERSION,
+    PERSONAL_METADATA,
+)
+from app.services.personal_challenges import (
+    HabitHealthSignals,
+    HabitHistory,
+    PersonalChallengeRanker,
+    choose_options,
+    load_habit_history,
+)
 from app.vision.food_vision import FoodVisionError, food_vision_is_configured, get_food_vision_provider, sha256_digest
 
 _DAILY_TARGET_1 = {
@@ -355,8 +374,12 @@ def challenge_payload(item: Challenge) -> dict[str, object]:
         "description": item.description,
         "safety": item.safety_copy,
         "source": {"title": item.source_title, "url": item.source_url},
-        **metadata_for(item.code),
+        **challenge_metadata(item.code),
     }
+
+
+def challenge_metadata(code: str) -> dict:
+    return PERSONAL_METADATA.get(code) or metadata_for(code)
 
 
 class ChallengeService:
@@ -365,14 +388,16 @@ class ChallengeService:
         self.wellness_repo = WellnessRepository()
 
     async def ensure_catalog(self, catalog_version: str | None = None) -> list[Challenge]:
-        catalog = CHALLENGE_V3_CATALOG if catalog_version == CATALOG_VERSION else CHALLENGE_CATALOG
+        catalog = {CATALOG_VERSION: CHALLENGE_V3_CATALOG, PERSONAL_CATALOG_VERSION: PERSONAL_CATALOG}.get(
+            catalog_version, CHALLENGE_CATALOG
+        )
         # Versioned codes are immutable: never rewrite the obligations of old cycles.
         existing = await self.repo.challenge_map()
         known = {item.code for item in existing.values()}
         for values in catalog:
             if values["code"] not in known:
                 defaults = {**values, "is_active": True}
-                if catalog_version != CATALOG_VERSION:
+                if catalog is CHALLENGE_CATALOG:
                     defaults.update(_report_frequency(values["code"]))
                 await Challenge.get_or_create(defaults=defaults, code=values["code"])
         wanted = {item["code"] for item in catalog}
@@ -446,11 +471,93 @@ class ChallengeService:
             "notice": "검토된 자료의 실천 예시입니다. AI/RAG 생성이나 개인별 의료 처방이 아닙니다.",
         }
 
+    async def _personal_ranker(self, user: User, request: PersonalChallengePreferences):
+        today = challenge_today()
+        checkup = await self.repo.latest_checkup(user.id) if request.use_health_record else None
+        # Old measurements and short-lived complaints should not steer the current plan.
+        has_recent_record = checkup is not None and 0 <= (today - checkup.checkup_date).days <= 90
+        health = HabitHealthSignals.from_checkup(checkup, today) if has_recent_record else HabitHealthSignals()
+        history = await load_habit_history(user.id, today) if request.use_activity_history else HabitHistory()
+        return PersonalChallengeRanker(request, health, history), has_recent_record, history
+
+    async def _personal_availability(self, user: User) -> str | None:
+        if await self.repo.active_consent(user.id) is None:
+            return "건강정보 처리 동의를 먼저 확인해 주세요."
+        eligibility = await self.repo.latest_eligibility(user.id)
+        if eligibility is None:
+            return "이용 대상 확인을 먼저 마쳐 주세요."
+        if eligibility.has_urgent_warning_sign or eligibility.has_diabetes_diagnosis:
+            return "현재는 챌린지보다 의료기관 안내가 우선입니다."
+        if eligibility.age < 19:
+            return "맞춤 추천은 만 19세 이상부터 이용할 수 있어요. 기존 챌린지는 이용 대상 기준을 확인해 주세요."
+        return None
+
+    async def personal_recommendations(self, user: User, request: PersonalChallengeRecommendationRequest):
+        unavailable = await self._personal_availability(user)
+        common = {
+            "catalog_version": PERSONAL_CATALOG_VERSION,
+            "recommendation_type": "context_and_habit_rules",
+            "photo_review_available": False,
+            "demo_photo_submission_only": False,
+            "availability_reason": unavailable,
+            "notice": "일상에서 시도할 수 있는 건강 실천 예시입니다. 치료식과 의료진의 활동 지침을 우선하세요.",
+        }
+        if unavailable:
+            return {
+                **common,
+                "items": [],
+                "options": [],
+                "personalized": False,
+                "medical_guidance_required_first": True,
+                "policy": {"health_record_applied": False, "activity_history_applied": False, "adjustment_tips": []},
+            }
+
+        needs_guidance = await self.repo.open_follow_up(user.id) is not None
+        # An open medical follow-up permits general previews but never applies records.
+        preferences = (
+            request.model_copy(
+                update={"mobility": "limited", "use_health_record": False, "use_activity_history": False}
+            )
+            if needs_guidance
+            else request
+        )
+        ranker, has_recent_record, history = await self._personal_ranker(user, preferences)
+        ranked = ranker.ranked_options()
+        catalog = {item.code: item for item in await self.ensure_catalog(PERSONAL_CATALOG_VERSION)}
+        ranked = {
+            domain: [(code, reason) for code, reason in options if code in catalog]
+            for domain, options in ranked.items()
+        }
+        if not all(ranked.values()):
+            raise HTTPException(status_code=503, detail="현재 선택한 상황에 맞는 챌린지를 불러오지 못했습니다.")
+        options = {
+            code: {**challenge_payload(catalog[code]), "recommendation_reason": reason}
+            for domain in DOMAINS
+            for code, reason in ranked[domain]
+        }
+        return {
+            **common,
+            "items": [options[code] for code in choose_options(ranked, request.rotation)],
+            "options": list(options.values()),
+            "policy": {
+                "notice": "추천된 행동을 보고, 같은 영역에서 더 잘 맞는 미션을 고를 수 있어요.",
+                "health_record_applied": has_recent_record,
+                "activity_history_applied": history.has_entries(),
+                "adjustment_tips": history.adjustment_tips(),
+            },
+            "medical_guidance_required_first": needs_guidance,
+            "personalized": has_recent_record or history.has_entries(),
+        }
+
     def _validate_v3_selection(self, challenges, request):
-        selected = [metadata_for(item.code) for item in challenges.values()]
+        selected = [challenge_metadata(item.code) for item in challenges.values()]
         if not request.catalog_version and not any(selected):
             return
-        if request.catalog_version != CATALOG_VERSION or len(selected) != 3 or not all(selected):
+        if (
+            request.catalog_version != CATALOG_VERSION
+            or len(selected) != 3
+            or any(item.get("catalog_version") != CATALOG_VERSION for item in selected)
+        ):
             raise HTTPException(status_code=422, detail="새 챌린지는 음료·식단·운동 3개를 선택해 주세요.")
         expected = recommendation_policy(request.focus, request.difficulty)["domain_levels"]
         if {item["domain"] for item in selected} != set(expected):
@@ -462,6 +569,21 @@ class ChallengeService:
                 raise HTTPException(
                     status_code=503, detail="사진 검토가 아직 연결되지 않았습니다. 후보를 다시 선택해 주세요."
                 )
+
+    async def _validate_cycle_selection(self, user: User, challenges, request: ChallengeCycleCreateRequest) -> None:
+        if request.catalog_version != PERSONAL_CATALOG_VERSION:
+            self._validate_v3_selection(challenges, request)
+            return
+        if unavailable := await self._personal_availability(user):
+            raise HTTPException(status_code=403, detail=unavailable)
+        ranker, _, _ = await self._personal_ranker(user, request)
+        selected = [PERSONAL_METADATA.get(item.code) for item in challenges.values()]
+        if (
+            len(selected) != len(DOMAINS)
+            or any(item is None or not ranker.eligible(item) for item in selected)
+            or {item["domain"] for item in selected} != set(DOMAINS)
+        ):
+            raise HTTPException(status_code=422, detail="현재 상황에 맞는 음료·식단·활동 미션을 다시 골라 주세요.")
 
     async def create_cycle(self, user: User, request: ChallengeCycleCreateRequest) -> ChallengeCycle:
         if await self.repo.active_consent(user.id) is None:
@@ -479,20 +601,24 @@ class ChallengeService:
                     "message": "의료기관 안내를 먼저 확인해 주세요.",
                 },
             )
-        if await self.repo.active_cycle(user.id) is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="진행 중인 4주 챌린지가 이미 있습니다.")
         challenges = await self.repo.challenge_map(request.challenge_ids)
         if len(challenges) != len(request.challenge_ids):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="선택할 수 없는 챌린지가 있습니다."
             )
-        self._validate_v3_selection(challenges, request)
+        await self._validate_cycle_selection(user, challenges, request)
         if request.prediction_id is not None and await self.repo.get_prediction(request.prediction_id, user.id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="예측 결과를 찾을 수 없습니다.")
         end_date = request.start_date + timedelta(days=27)
-        cycle_number = await self.repo.count_cycles(user.id) + 1
         cycle_status = "active" if request.start_date <= challenge_today() else "scheduled"
         async with in_transaction():
+            # Serialize cycle creation for the same user, even when two tabs start together.
+            await User.filter(id=user.id).select_for_update().first()
+            if await self.repo.active_cycle(user.id) is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="진행 중인 4주 챌린지가 이미 있습니다."
+                )
+            cycle_number = await self.repo.count_cycles(user.id) + 1
             cycle = await ChallengeCycle.create(
                 user_id=user.id,
                 prediction_id=request.prediction_id,
@@ -534,16 +660,21 @@ class ChallengeService:
         if log_date < cycle.start_date or log_date > cycle.end_date:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="챌린지 기간 밖의 날짜입니다.")
         challenge = await Challenge.get(id=user_challenge.challenge_id)
-        metadata = metadata_for(challenge.code)
+        metadata = challenge_metadata(challenge.code)
+        values = request.model_dump()
         if metadata:
             await self._v3_health_permission(user)
             if request.is_completed and metadata["verification_type"] != 3:
                 raise HTTPException(status_code=422, detail="이 챌린지는 사진 제출 절차로 완료해 주세요.")
+            if metadata["catalog_version"] == PERSONAL_CATALOG_VERSION:
+                if unavailable := await self._personal_availability(user):
+                    raise HTTPException(status_code=403, detail=unavailable)
+                values["value"] = 1 if request.is_completed else None
         return await self.repo.upsert_log(
             user_challenge_id=user_challenge_id,
             user_id=user.id,
             log_date=log_date,
-            values=request.model_dump(),
+            values=values,
         )
 
     async def _v3_health_permission(self, user):
@@ -751,7 +882,7 @@ class ChallengeService:
 
     async def _reject_v3_legacy_verification(self, challenge_id: int) -> None:
         challenge = await Challenge.get(id=challenge_id)
-        if metadata_for(challenge.code):
+        if challenge_metadata(challenge.code):
             raise HTTPException(
                 status_code=422, detail="새 챌린지는 지정된 사진 제출 또는 자가 체크 절차를 이용해 주세요."
             )
@@ -781,9 +912,9 @@ class ChallengeService:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="미래 날짜의 보상은 받을 수 없습니다."
             )
         reward_status = await self.daily_reward_status(user, reward_date)
-        if not reward_status["eligible"]:
+        if not reward_status["eligible"] and not reward_status["claimed"]:
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="오늘의 챌린지 3개를 모두 완료해야 합니다."
+                status_code=status.HTTP_409_CONFLICT, detail="오늘 선택한 챌린지를 모두 완료해야 합니다."
             )
         async with in_transaction():
             reward, created = await self.repo.claim_daily_reward(user.id, reward_date, 55)

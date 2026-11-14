@@ -3,7 +3,7 @@ const $ = (selector) => document.querySelector(selector);
 Object.assign(state, { lifestyleReportStatus: "idle", reportPeriods: {}, reportPeriodStatus: {} });
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-const challengeV3 = { active: false, busy: false, focus: "balanced", difficulty: "easy", photoReviewAvailable: false, demoPhotoSubmissionOnly: false, owner: null, request: 0 };
+const challengeV3 = { active: false, busy: false, focus: "balanced", difficulty: "easy", photoReviewAvailable: false, demoPhotoSubmissionOnly: false, owner: null, request: 0, catalogVersion: "evidence-v3", preferences: null, rotation: 0 };
 const challengeDay = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const challengeLevelLabel = (level) => ({ easy: "쉬움", moderate: "보통", advanced: "도전" }[level] || "공통");
 const challengeProofLabel = (type) => ({ 1: "1유형 · 사진 + 채소 확인", 2: "2유형 · 사진 제출", 3: "3유형 · 자가 체크" }[type] || "기존 기록 방식");
@@ -537,6 +537,7 @@ function setupAuthAccessibility() {
   });
 }
 function challengeRecordType(item = {}) {
+  if (item.catalog_version === "personal-v4") return "simple";
   if (item.catalog_version === "evidence-v3") return item.verification_type === 3 ? "simple" : "photo";
   const title = item.title || "";
   return title.includes("식사") ? "photo" : "simple";
@@ -625,6 +626,12 @@ function challengeCardGoal(goal = "") {
 }
 function simpleRecordPresentation(item = {}) {
   const title = item.title || "";
+  if (item.catalog_version === "personal-v4") return {
+    kind: { hydration: "water", fiber_diet: "generic", aerobic_activity: "walking" }[item.domain] || "generic",
+    title,
+    description: item.completion_rule || item.description,
+    action: "실천했어요",
+  };
   if (title.includes("걷")) return {
     kind: "walking", title: "오늘 가볍게 걸으셨나요?",
     description: "사진 없이 ‘했어요’를 누르면 오늘의 걷기 실천으로 기록돼요.", action: "네, 걸었어요",
@@ -649,6 +656,9 @@ function simpleRecordPresentation(item = {}) {
 function isHydrationRecord(item = {}) {
   const title = item.title || "";
   return item.domain === "hydration" || title.includes("마시") || title.includes("물");
+}
+function usesWaterServingControl(item = {}) {
+  return item.catalog_version !== "personal-v4" && isHydrationRecord(item);
 }
 function clampWaterServings(value) {
   const number = Number(value);
@@ -3400,14 +3410,19 @@ async function loadChallenges() {
 }
 
 function selectV3Challenges() {
-  const difficulty = $("#challenge-v3-difficulty").value;
-  const selected = [
-    state.challengeCatalog.find((item) => item.code === "v3_hydration_choice"),
-    state.challengeCatalog.find((item) => item.code === $("#challenge-v3-diet").value),
-    state.challengeCatalog.find((item) => item.code === $("#challenge-v3-activity").value),
+  if (state.challengeListStatus !== "ready" || challengeV3.owner !== state.token) return;
+  const personal = challengeV3.catalogVersion === "personal-v4";
+  const codes = [
+    personal ? $("#challenge-v4-hydration").value : "v3_hydration_choice",
+    $("#challenge-v3-diet").value,
+    $("#challenge-v3-activity").value,
   ];
-  if (selected.some((item) => !item) || selected[1].difficulty !== difficulty || selected[2].difficulty !== difficulty) {
+  const domains = ["hydration", "fiber_diet", "aerobic_activity"];
+  const selected = codes.map((code) => state.challengeCatalog.find((item) => item.code === code));
+  if (selected.some((item, index) => item?.domain !== domains[index])
+    || (!personal && selected.slice(1).some((item) => item.difficulty !== challengeV3.difficulty))) {
     state.challengeListStatus = "failed";
+    updateChallengeStartState();
     showMessage("선택한 챌린지를 확인할 수 없습니다. 목록을 다시 불러와 주세요.");
     return;
   }
@@ -3416,67 +3431,189 @@ function selectV3Challenges() {
   renderChallengeChoices();
 }
 
+function readPersonalChallengePreferences(difficulty) {
+  return {
+    difficulty,
+    focus: "balanced",
+    context: $("#challenge-context").value,
+    mobility: $("#challenge-mobility").value,
+    sweet_drinks: $("#challenge-sweet-drinks").value,
+    use_health_record: $("#challenge-use-health-record").checked,
+    use_activity_history: $("#challenge-use-activity-history").checked,
+  };
+}
+
+function challengeStartPayload(ids) {
+  const preferences = challengeV3.preferences;
+  return {
+    start_date: challengeDay(),
+    challenge_ids: ids,
+    prediction_id: preferences ? null : state.predictionId,
+    catalog_version: challengeV3.catalogVersion,
+    ...(preferences || { focus: challengeV3.focus, difficulty: challengeV3.difficulty }),
+  };
+}
+
+function resetPersonalChallengeControls() {
+  $("#challenge-personal-mode").checked = true;
+  $("#challenge-context").value = "any";
+  $("#challenge-mobility").value = "unspecified";
+  $("#challenge-sweet-drinks").value = "unspecified";
+  $("#challenge-use-health-record").checked = false;
+  $("#challenge-use-activity-history").checked = false;
+  $("#challenge-v3-difficulty").value = "easy";
+  $("#challenge-v4-hydration").value = "";
+  $("#challenge-v3-diet").value = "";
+  $("#challenge-v3-activity").value = "";
+  challengeV3.rotation = 0;
+}
+
+function setChallengeChoices(select, choices, preferredCode = "") {
+  const previous = select.value;
+  select.innerHTML = choices.map((item) => {
+    const unavailable = item.verification_type === 1 && !challengeV3.photoReviewAvailable && !challengeV3.demoPhotoSubmissionOnly;
+    return `<option value="${escapeHtml(item.code)}" ${unavailable ? "disabled" : ""}>${escapeHtml(item.title)}${unavailable ? " · 사진 판별 모델 필요" : ""}</option>`;
+  }).join("");
+  const available = [...select.options].filter((option) => !option.disabled).map((option) => option.value);
+  select.value = [preferredCode, previous, ...available].find((code) => available.includes(code)) || "";
+}
+
+function localV3Challenges(difficulty) {
+  const templates = [
+    ["v3_hydration_choice", "hydration", fallbackChallenges[2]],
+    [`v3_wholegrain_${difficulty}`, "fiber_diet", localNotionChallenges.find((item) => item.challenge_id === 211)],
+    [`v3_walk_${difficulty}`, "aerobic_activity", fallbackChallenges[0]],
+    [`v3_indoor_aerobic_${difficulty}`, "aerobic_activity", { challenge_id: 225, title: "실내에서 가볍게 움직이기", daily_goal: "편한 공간에서 짧게 움직여 보기" }],
+    [`v3_vegetable_${difficulty}`, "fiber_diet", localNotionChallenges.find((item) => item.challenge_id === 210)],
+  ];
+  return templates.map(([code, domain, item]) => ({
+    ...item,
+    code,
+    domain,
+    catalog_version: "evidence-v3",
+    difficulty,
+    always_include: domain === "hydration",
+    verification_type: 3,
+    verification_scope: "미리보기에서 간편 체크를 체험해요.",
+    description: item.description || item.daily_goal,
+    safety: "개인별 의료진의 안내를 우선하세요.",
+  }));
+}
+
+async function loadSelectableChallenges(preferences) {
+  if (preferences) {
+    const recommendation = await api("/challenge-recommendations/personal", {
+      method: "POST",
+      body: JSON.stringify({ ...preferences, rotation: challengeV3.rotation }),
+    });
+    return { items: recommendation.options || [], recommendation };
+  }
+  const difficulty = $("#challenge-v3-difficulty").value;
+  const catalogUrl = "/challenges?catalog_version=evidence-v3";
+  if (isLocalPreview()) {
+    // The local preview does not contain a real account for authenticated recommendations.
+    return { items: localV3Challenges(difficulty), recommendation: {} };
+  }
+  const [catalog, recommendation] = await Promise.all([
+    api(catalogUrl),
+    api(`/challenge-recommendations?catalog_version=evidence-v3&focus=balanced&difficulty=${encodeURIComponent(difficulty)}`),
+  ]);
+  return { items: catalog.items || [], recommendation };
+}
+
 async function loadV3Challenges() {
   showChallengeSelectionView();
-  if (challengeV3.busy) return;
   const token = state.token;
+  if (challengeV3.busy && challengeV3.owner === token) return;
+  if ($("#challenge-form").getAttribute("aria-busy") === "true") return;
+  if (challengeV3.owner !== token) resetPersonalChallengeControls();
   challengeV3.owner = token;
   challengeV3.busy = true;
   state.challengeListStatus = "loading";
+  state.openFollowUpActionIds = [];
+  $("#challenge-list").replaceChildren();
+  const followUpPanel = $("#challenge-follow-up");
+  const acknowledge = $("#acknowledge-challenge-follow-up");
+  followUpPanel.hidden = true;
+  acknowledge.hidden = true;
   const request = ++challengeV3.request;
-  const controls = [$("#challenge-v3-difficulty"), $("#challenge-v3-diet"), $("#challenge-v3-activity"), $("#start-challenge")];
+  const isCurrent = () => state.token === token && challengeV3.request === request;
+  const personal = !isLocalPreview() && $("#challenge-personal-mode").checked;
+  $("#challenge-personal-mode-label").hidden = isLocalPreview();
+  $("#challenge-context-settings").hidden = !personal;
+  $("#challenge-hydration-choice").hidden = !personal;
+  $("#challenge-v4-refresh").hidden = !personal;
+  const controls = $$(".challenge-v3-controls input, .challenge-v3-controls select, .challenge-v3-controls button, #start-challenge");
   controls.forEach((control) => { control.disabled = true; });
   $("#retry-challenges").hidden = true;
   $("#challenge-v3-policy").textContent = "챌린지 목록을 불러오고 있어요…";
   try {
     const difficulty = $("#challenge-v3-difficulty").value;
-    const [catalog, recommendation] = await Promise.all([
-      api("/challenges?catalog_version=evidence-v3"),
-      api(`/challenge-recommendations?catalog_version=evidence-v3&focus=balanced&difficulty=${encodeURIComponent(difficulty)}`),
-    ]);
-    if (state.token !== token || challengeV3.request !== request) return;
-    const items = catalog.items || [];
-    const diet = items.filter((item) => item.domain === "fiber_diet" && item.difficulty === difficulty);
-    const activity = items.filter((item) => item.domain === "aerobic_activity" && item.difficulty === difficulty);
-    if (diet.length !== 2 || activity.length !== 2 || !items.some((item) => item.code === "v3_hydration_choice")) {
-      throw new Error("선택 가능한 챌린지 목록을 확인할 수 없습니다.");
+    const preferences = personal ? readPersonalChallengePreferences(difficulty) : null;
+    const { items, recommendation } = await loadSelectableChallenges(preferences);
+    if (!isCurrent()) return;
+    state.challengeStartSafetyBlocked = false;
+    state.customChallengeSelected = false;
+    if (recommendation.availability_reason) {
+      state.selectedChallengeIds.clear();
+      state.challengeRecommendations = [];
+      state.challengeCatalog = [];
+      state.challengeStartSafetyBlocked = true;
+      state.challengeListStatus = "unavailable";
+      $("#challenge-v3-policy").textContent = recommendation.availability_reason;
+      return;
     }
     challengeV3.photoReviewAvailable = recommendation.photo_review_available === true;
     challengeV3.demoPhotoSubmissionOnly = recommendation.demo_photo_submission_only === true;
-    const fill = (id, choices) => {
-      const select = $(id);
-      const previous = select.value;
-      select.innerHTML = choices.map((item) => {
-        const unavailable = item.verification_type === 1 && !challengeV3.photoReviewAvailable && !challengeV3.demoPhotoSubmissionOnly;
-        return `<option value="${escapeHtml(item.code)}" ${unavailable ? "disabled" : ""}>${escapeHtml(item.title)}${unavailable ? " · 사진 판별 모델 필요" : ""}</option>`;
-      }).join("");
-      const available = [...select.options].filter((option) => !option.disabled);
-      select.value = available.some((option) => option.value === previous) ? previous : available[0]?.value || "";
-    };
-    fill("#challenge-v3-diet", diet);
-    fill("#challenge-v3-activity", activity);
+    const choicesByDomain = [
+      ["hydration", "#challenge-v4-hydration"],
+      ["fiber_diet", "#challenge-v3-diet"],
+      ["aerobic_activity", "#challenge-v3-activity"],
+    ];
+    for (const [domain, selector] of choicesByDomain) {
+      const choices = items.filter((item) => item.domain === domain && (personal || domain === "hydration" || item.difficulty === difficulty));
+      const recommended = personal ? recommendation.items?.find((item) => item.domain === domain) : null;
+      if (!choices.length || (personal && !choices.some((item) => item.code === recommended?.code))) {
+        throw new Error("선택 가능한 챌린지 목록을 확인할 수 없습니다.");
+      }
+      if (personal || domain !== "hydration") setChallengeChoices($(selector), choices, recommended?.code);
+    }
     state.challengeCatalog = items;
     challengeV3.active = true;
     challengeV3.difficulty = difficulty;
-    state.challengeListStatus = "ready";
-    state.challengeStartSafetyBlocked = false;
-    state.openFollowUpActionIds = [];
-    $("#challenge-follow-up").hidden = !recommendation.medical_guidance_required_first;
+    challengeV3.catalogVersion = personal ? "personal-v4" : "evidence-v3";
+    challengeV3.preferences = preferences;
+    followUpPanel.hidden = !recommendation.medical_guidance_required_first;
     if (recommendation.medical_guidance_required_first) {
       $("#challenge-follow-up-message").textContent = "의료기관 안내를 먼저 확인해 주세요.";
       const actions = await api("/follow-up-actions");
-      if (state.token !== token || challengeV3.request !== request) return;
+      if (!isCurrent()) return;
       state.openFollowUpActionIds = (actions.items || []).filter((item) => !item.acknowledged_at).map((item) => item.action_id);
-      $("#acknowledge-challenge-follow-up").hidden = !state.openFollowUpActionIds.length;
+      acknowledge.hidden = !state.openFollowUpActionIds.length;
     }
-    $("#challenge-v3-policy").textContent = challengeV3.photoReviewAvailable
-      ? "음료 1개와 선택한 식단·운동 각 1개가 포함됩니다."
-      : challengeV3.demoPhotoSubmissionOnly
-        ? "미리보기에서는 채소 식단도 사진 제출과 본인 기록만 확인합니다. 채소 포함 여부는 자동 판정하지 않습니다."
-        : "식사 사진 판별 모델이 없어 채소 식단은 선택할 수 없습니다.";
+    let notice = "식사 사진 판별 모델이 없어 채소 식단은 선택할 수 없습니다.";
+    if (personal) {
+      const policy = recommendation.policy || {};
+      const updates = [policy.notice, ...(policy.adjustment_tips || [])];
+      if (policy.health_record_applied) updates.push("최근 건강기록을 반영했어요.");
+      if (policy.activity_history_applied) updates.push("최근 실천 기록을 반영했어요.");
+      if (!recommendation.medical_guidance_required_first) {
+        if (preferences.use_health_record && !policy.health_record_applied) updates.push("반영할 최근 건강기록이 없어요.");
+        if (preferences.use_activity_history && !policy.activity_history_applied) updates.push("반영할 최근 실천 기록이 없어요.");
+      }
+      notice = updates.filter(Boolean).join(" ");
+    } else if (isLocalPreview()) {
+      notice = "미리보기에서 간편 체크를 체험해요.";
+    } else if (challengeV3.photoReviewAvailable) {
+      notice = "음료 1개와 선택한 식단·운동 각 1개가 포함됩니다.";
+    } else if (challengeV3.demoPhotoSubmissionOnly) {
+      notice = "미리보기에서는 채소 식단도 사진 제출과 본인 기록만 확인합니다. 채소 포함 여부는 자동 판정하지 않습니다.";
+    }
+    $("#challenge-v3-policy").textContent = notice;
+    state.challengeListStatus = "ready";
     selectV3Challenges();
   } catch (error) {
-    if (state.token !== token || challengeV3.request !== request) return;
+    if (!isCurrent()) return;
     state.challengeListStatus = "failed";
     $("#challenge-v3-policy").textContent = "목록을 불러오지 못했습니다. 다시 시도해 주세요.";
     $("#retry-challenges").hidden = false;
@@ -3484,8 +3621,10 @@ async function loadV3Challenges() {
   } finally {
     if (challengeV3.request === request) {
       challengeV3.busy = false;
-      controls.forEach((control) => { control.disabled = false; });
-      updateChallengeStartState();
+      if (isCurrent()) {
+        controls.forEach((control) => { control.disabled = false; });
+        updateChallengeStartState();
+      }
     }
   }
 }
@@ -3651,12 +3790,19 @@ function renderChallengeChoices() {
     const labels = { hydration: "음료 선택", fiber_diet: "식이섬유 중심 식사", aerobic_activity: "유산소 활동", tracking: "기록 습관" };
     const images = { hydration: "water", fiber_diet: "meal", aerobic_activity: "walking", tracking: "checkup" };
     $("#challenge-list").innerHTML = state.challengeRecommendations.map((item) => {
+      const personal = item.catalog_version === "personal-v4";
+      const explanation = personal ? personalChallengeDetails(item) : "";
+      const level = !personal && item.always_include ? "공통 목표" : challengeLevelLabel(item.difficulty);
+      let proofLabel = challengeProofLabel(item.verification_type);
+      if (personal) proofLabel = "간편 체크";
+      else if (item.verification_type === 1 && !challengeV3.photoReviewAvailable) proofLabel = "사진 제출 · 채소 여부는 본인 기록";
       return `<article class="challenge-v3-card" data-v3-domain="${escapeHtml(item.domain)}">
         <img src="/static/assets/hyeoldangi-challenge-${images[item.domain]}.png" alt="">
-        <p class="eyebrow">${labels[item.domain]} · ${item.always_include ? "공통 목표" : challengeLevelLabel(item.difficulty)}</p>
+        <p class="eyebrow">${labels[item.domain]} · ${level}</p>
         <h4>${challengeCardTitle(item.title)}</h4><strong>${challengeCardGoal(item.daily_goal)}</strong>
-        <p>${escapeHtml(item.description)}</p><span class="record-type-badge">${item.verification_type === 1 && !challengeV3.photoReviewAvailable ? "사진 제출 · 채소 여부는 본인 기록" : challengeProofLabel(item.verification_type)}</span>
-        <p class="challenge-v3-safety">${escapeHtml(item.safety)}</p>
+        <p>${escapeHtml(item.description)}</p><span class="record-type-badge">${proofLabel}</span>
+        ${explanation}
+        <p class="challenge-v3-safety">${escapeHtml(item.safety || "")}</p>
       </article>`;
     }).join("");
     $("#challenge-category-panel").hidden = true;
@@ -3674,6 +3820,21 @@ function renderChallengeChoices() {
   }).join("") + customChallengeSlot();
   renderChallengeDetails();
   updateChallengeSelectionCount();
+}
+
+function personalChallengeDetails(item) {
+  const instructions = [
+    ["이럴 때 해요", item.cue],
+    ["어려운 날엔", item.fallback],
+    ["기록 기준", item.completion_rule],
+    ["추천 이유", item.recommendation_reason],
+  ].filter(([, value]) => value);
+  const sourceUrl = safeExternalUrl(item.source?.url);
+  const source = sourceUrl && item.source?.title
+    ? `<p><a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.source.title)}</a></p>`
+    : "";
+  return `<details><summary>실천 방법과 출처</summary><dl class="challenge-action-details">${instructions.map(([label, value]) => `
+    <div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>${source}</details>`;
 }
 
 function syncWalkingLevelPicker() {
@@ -3814,8 +3975,9 @@ function renderDailyRecordList() {
     const presentation = type === "simple" ? simpleRecordPresentation(item) : null;
     const icon = habitRecordIcon(type === "photo" ? "photo" : presentation.kind);
     const v3 = item.catalog_version === "evidence-v3";
-    const recordHint = v3 ? `${item.daily_goal} · ${item.verification_scope}`
-      : type === "photo" ? "식사 사진을 올리거나 간편 체크로 기록해요." : "사진 없이 간편 체크로 바로 기록해요.";
+    let recordHint = type === "photo" ? "식사 사진을 올리거나 간편 체크로 기록해요." : "사진 없이 간편 체크로 바로 기록해요.";
+    if (item.catalog_version === "personal-v4") recordHint = item.cue || item.daily_goal;
+    else if (v3) recordHint = `${item.daily_goal} · ${item.verification_scope}`;
     return `<button class="daily-record-card daily-record-open ${done ? "done" : ""} ${failed ? "record-load-failed" : ""}" type="button" data-user-challenge-id="${escapeHtml(id)}" data-record-type="${type}" aria-label="${escapeHtml(item.title)} · ${done ? "오늘 기록 확인" : "기록하기"}" aria-haspopup="dialog">
       <span class="daily-record-icon" aria-hidden="true"><b>${done ? "✓" : icon}</b></span>
       <span class="daily-record-copy">
@@ -3829,15 +3991,14 @@ function renderDailyRecordList() {
 }
 
 function createLocalDemoCycle(ids, customChallenge = null) {
-  const selected = [...fallbackChallenges, ...localNotionChallenges].filter((challenge) => ids.includes(challenge.challenge_id));
+  const selected = ids.map((id) => state.challengeCatalog.find((challenge) => challenge.challenge_id === id)).filter(Boolean);
   if (customChallenge) selected.push({ challenge_id: "custom", title: customChallenge.title });
   return {
     cycle_id: "local-demo-cycle",
     cycle_number: 1,
     user_challenges: selected.map((challenge, index) => ({
-      challenge_id: challenge.challenge_id,
+      ...challenge,
       user_challenge_id: `local-${index + 1}`,
-      title: challenge.title,
     })),
   };
 }
@@ -4139,16 +4300,18 @@ async function completeDailyRecord(target, source = "self_report", value = 1) {
   const cycle = state.cycle;
   if (target.item?.catalog_version === "evidence-v3" && target.item.verification_type !== 3) throw new Error("사진 제출 절차로 완료해 주세요.");
   const today = challengeDay();
-  const recordValue = isHydrationRecord(target.item) ? clampWaterServings(value) : 1;
+  const waterServingGoal = usesWaterServingControl(target.item);
+  const recordValue = waterServingGoal ? clampWaterServings(value) : 1;
+  const reportsValue = ["evidence-v3", "personal-v4"].includes(target.item?.catalog_version);
   if (!isLocalPreview()) {
     await api(`/user-challenges/${target.id}/logs/${today}`, {
       method: "PUT",
-      body: JSON.stringify({ is_completed: true, source, note: null, ...(target.item?.catalog_version === "evidence-v3" ? { value: recordValue } : {}) }),
+      body: JSON.stringify({ is_completed: true, source, note: null, ...(reportsValue ? { value: recordValue } : {}) }),
     });
   }
   if (state.token !== token || state.cycle !== cycle) return;
   state.dailyCompleted.add(String(target.id));
-  if (isHydrationRecord(target.item)) {
+  if (waterServingGoal) {
     state.waterServingsByChallenge ||= {};
     state.waterServingsByChallenge[String(target.id)] = recordValue;
   }
@@ -4210,6 +4373,17 @@ function openSimpleRecordModal(item) {
   $("#record-modal").setAttribute("aria-labelledby", "record-modal-title");
   $("#record-modal-title").textContent = completed ? `${item.title}, 오늘 기록했어요` : presentation.title;
   $("#record-simple-description").textContent = completed ? "오늘의 실천이 저장되어 있어요. 잘못 기록했다면 취소할 수 있어요." : presentation.description;
+  const personalPending = item.catalog_version === "personal-v4" && !completed;
+  const fallback = $("#record-simple-fallback");
+  const safety = $("#record-simple-safety");
+  if (fallback) {
+    fallback.hidden = !personalPending || !item.fallback;
+    fallback.textContent = fallback.hidden ? "" : item.fallback;
+  }
+  if (safety) {
+    safety.hidden = !personalPending || !item.safety;
+    safety.textContent = safety.hidden ? "" : item.safety;
+  }
   $("#confirm-simple-record").textContent = completed ? "확인" : presentation.action;
   $("#record-simple-panel .record-cancel").hidden = completed;
   $("#undo-daily-record").hidden = !completed;
@@ -4218,7 +4392,7 @@ function openSimpleRecordModal(item) {
   $("#record-action-error").hidden = true;
   $("#confirm-simple-record").disabled = false;
   const waterControl = $("#water-serving-control");
-  const showWaterControl = isHydrationRecord(item);
+  const showWaterControl = usesWaterServingControl(item);
   waterControl.hidden = !showWaterControl;
   visual.style.removeProperty("--water-level");
   if (showWaterControl) syncWaterServingControl(state.recordTarget.value);
@@ -6569,6 +6743,13 @@ $("#retry-analysis").addEventListener("click", () => runPrediction({ retryFailed
 $("#retry-partial-analysis").addEventListener("click", () => runPrediction({ retryFailed: true }));
 $("#retry-challenges").addEventListener("click", loadChallenges);
 $("#challenge-v3-difficulty")?.addEventListener("change", loadChallenges);
+$("#challenge-personal-mode")?.addEventListener("change", loadChallenges);
+$("#challenge-context-settings")?.addEventListener("change", loadChallenges);
+$("#challenge-v4-refresh")?.addEventListener("click", () => {
+  challengeV3.rotation = (challengeV3.rotation + 1) % 1_000_001;
+  void loadChallenges();
+});
+$("#challenge-v4-hydration")?.addEventListener("change", selectV3Challenges);
 $("#challenge-v3-diet")?.addEventListener("change", selectV3Challenges);
 $("#challenge-v3-activity")?.addEventListener("change", selectV3Challenges);
 $$("[data-demo-status]").forEach((button) => button.addEventListener("click", () => {
@@ -6727,7 +6908,8 @@ $("#walking-level-picker").addEventListener("change", (event) => {
 $("#challenge-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!requireActiveHealthConsent("새 챌린지 시작")) return;
-  if (challengeV3.busy || state.challengeListStatus !== "ready" || !challengeV3.active) return;
+  if (challengeV3.busy || state.challengeListStatus !== "ready" || !challengeV3.active || state.challengeStartSafetyBlocked) return;
+  if (event.currentTarget.getAttribute("aria-busy") === "true") return;
   const token = state.token;
   if (!$("#challenge-follow-up").hidden) {
     $("#challenge-follow-up").focus({ preventScroll: true });
@@ -6741,6 +6923,8 @@ $("#challenge-form").addEventListener("submit", async (event) => {
   if (!ids.length && !customSelected) return showMessage("챌린지를 하나 이상 선택해 주세요.");
   state.walkingLevel = selectedRadioValue("walking-level") || "starter";
   const releaseBusy = setFormBusy(event.currentTarget, event.submitter, "챌린지 시작 중…");
+  const controls = $$(".challenge-v3-controls input, .challenge-v3-controls select");
+  controls.forEach((control) => { control.disabled = true; });
   try {
     if (isLocalPreview()) {
       const cycle = createLocalDemoCycle(ids, customSelected ? state.customChallenge : null);
@@ -6753,10 +6937,7 @@ $("#challenge-form").addEventListener("submit", async (event) => {
       showMessage("맞춤 챌린지는 저장 API가 연결된 뒤 시작할 수 있어요. 선택한 내용은 현재 화면에 유지됩니다.");
       return;
     }
-    const cycle = await api("/challenge-cycles", { method: "POST", body: JSON.stringify({
-      start_date: challengeDay(), challenge_ids: ids, prediction_id: state.predictionId,
-      catalog_version: "evidence-v3", focus: challengeV3.focus, difficulty: challengeV3.difficulty,
-    }) });
+    const cycle = await api("/challenge-cycles", { method: "POST", body: JSON.stringify(challengeStartPayload(ids)) });
     if (state.token !== token) return;
     renderCycle(cycle);
     await openChallengeTab({ selectionCompleted: true });
@@ -6782,10 +6963,16 @@ $("#challenge-form").addEventListener("submit", async (event) => {
       showMessage(currentCycleError.message || error.message);
     }
   }
-  finally { releaseBusy(); }
+  finally {
+    releaseBusy();
+    controls.forEach((control) => { control.disabled = false; });
+    updateChallengeStartState();
+  }
 });
 $("#acknowledge-challenge-follow-up").addEventListener("click", async (event) => {
   if (!state.openFollowUpActionIds.length) return;
+  const token = state.token;
+  const request = challengeV3.request;
   const button = event.currentTarget;
   button.disabled = true;
   button.textContent = "확인 처리 중…";
@@ -6793,18 +6980,20 @@ $("#acknowledge-challenge-follow-up").addEventListener("click", async (event) =>
     await Promise.all(state.openFollowUpActionIds.map((actionId) => (
       api(`/follow-up-actions/${actionId}/acknowledge`, { method: "PATCH" })
     )));
+    if (state.token !== token || challengeV3.request !== request) return;
     state.openFollowUpActionIds = [];
     const blockingReasons = state.eligibility?.reason_codes || [];
     const stillBlocked = blockingReasons.some((code) => (
       code === "URGENT_MEDICAL_ATTENTION" || code === "DIAGNOSED_DIABETES" || code === "UNDER_MINIMUM_SERVICE_AGE"
     ));
     $("#challenge-follow-up").hidden = true;
-    $("#start-challenge").disabled = stillBlocked;
+    state.challengeStartSafetyBlocked = stillBlocked;
+    updateChallengeStartState();
     showMessage(stillBlocked
       ? "안내를 확인했습니다. 현재 안전 확인 결과에서는 챌린지를 시작할 수 없습니다."
       : "의료기관 안내 확인을 완료했습니다. 이제 챌린지를 시작할 수 있습니다.", "success");
   } catch (error) {
-    showMessage(error.message);
+    if (state.token === token && challengeV3.request === request) showMessage(error.message);
   } finally {
     button.disabled = false;
     button.textContent = "안내 확인 완료";
@@ -6837,8 +7026,9 @@ $("#confirm-simple-record").addEventListener("click", async (event) => {
   const releaseBusy = setButtonBusy(event.currentTarget, "기록 저장 중…");
   try {
     const target = state.recordTarget;
-    const recordValue = isHydrationRecord(target?.item) ? currentWaterServings() : 1;
-    if (isHydrationRecord(target?.item)) syncWaterServingControl(recordValue);
+    const waterServingGoal = usesWaterServingControl(target?.item);
+    const recordValue = waterServingGoal ? currentWaterServings() : 1;
+    if (waterServingGoal) syncWaterServingControl(recordValue);
     $("#record-simple-visual").classList.add("completed");
     await sleep(450);
     closeRecordModal();

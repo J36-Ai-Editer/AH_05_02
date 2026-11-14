@@ -28,7 +28,7 @@
       if (!explicitAppEntry) window.location.replace("/static/intro-retro.html?v=20260910-orbit-card-height-v1");
     })();
   </script>
-  <link rel="stylesheet" href="/static/styles.css?v=20260919-health-history-result-v2">
+  <link rel="stylesheet" href="/static/styles.css?v=20261115-personal-challenges">
   <link rel="stylesheet" href="/static/wood-sign-theme.css?v=20260910-result-signal-grid-restore-v1">
   <link rel="stylesheet" href="/static/lifestyle-map.css?v=20260908-tools-heading-v3">
   <link rel="stylesheet" href="/static/education-carousel.css?v=20260915-health-quiz-card-art-v1">
@@ -36,7 +36,7 @@
   <script src="/static/education-carousel.js?v=20260908-shared-carousel-v1" defer></script>
   <script src="/static/lifestyle-map.js?v=20260908-body-art-v3" defer></script>
   <script src="/static/health-quiz-preview.js?v=20260913-rag-quiz-preview-v4" defer></script>
-  <script src="/static/app.js?v=20260919-health-history-result-v2" defer></script>
+  <script src="/static/app.js?v=20261115-personal-challenges" defer></script>
 </head>
 <body class="intro-mode">
   <a class="skip-link" href="#main">본문으로 바로가기</a>
@@ -671,14 +671,37 @@
         </div>
         <form id="challenge-form">
           <section class="challenge-v3-controls" aria-labelledby="challenge-v3-heading">
-            <p class="eyebrow">생활습관 챌린지</p>
             <h3 id="challenge-v3-heading">매일 음료·식단·운동, 한 가지씩</h3>
-            <p>실천 난이도를 고르고 식단과 운동을 각각 선택해 주세요. 음료 목표는 공통으로 포함됩니다.</p>
+            <label class="challenge-preference-check" id="challenge-personal-mode-label">
+              <input id="challenge-personal-mode" type="checkbox" role="switch" checked>
+              <span>내 생활에 맞춰 추천</span>
+            </label>
+            <fieldset class="challenge-context-settings" id="challenge-context-settings" aria-describedby="challenge-context-help">
+              <legend>실천할 상황</legend>
+              <div class="challenge-v3-control-row">
+                <div class="form-row"><label for="challenge-context">주로 실천할 곳</label>
+                  <select id="challenge-context"><option value="any">어디서든</option><option value="home">집</option><option value="work">직장·학교</option><option value="dining_out">외식·편의점</option></select>
+                </div>
+                <div class="form-row"><label for="challenge-mobility">움직임이 편한 정도</label>
+                  <select id="challenge-mobility"><option value="unspecified">선택 안 함</option><option value="comfortable">가볍게 움직일 수 있어요</option><option value="limited">서거나 걷기 어려워요</option></select>
+                </div>
+                <div class="form-row"><label for="challenge-sweet-drinks">단 음료를 마시는 빈도</label>
+                  <select id="challenge-sweet-drinks"><option value="unspecified">선택 안 함</option><option value="often">자주 마셔요</option><option value="rarely">거의 마시지 않아요</option></select>
+                </div>
+              </div>
+              <div class="challenge-opt-ins">
+                <label class="challenge-preference-check"><input id="challenge-use-health-record" type="checkbox"><span>최근 건강기록 반영</span></label>
+                <label class="challenge-preference-check"><input id="challenge-use-activity-history" type="checkbox"><span>최근 챌린지 실천 기록 반영</span></label>
+              </div>
+              <small id="challenge-context-help">체크한 기록만 추천에 반영해요.</small>
+            </fieldset>
             <div class="challenge-v3-control-row">
               <div class="form-row"><label for="challenge-v3-difficulty">실천 난이도</label>
               <select id="challenge-v3-difficulty"><option value="easy">쉬움 · 작게 시작</option><option value="moderate">보통 · 꾸준히 실천</option><option value="advanced">도전 · 무리 없는 범위에서</option></select></div>
+              <div class="form-row" id="challenge-hydration-choice"><label for="challenge-v4-hydration">음료 선택</label><select id="challenge-v4-hydration" aria-controls="challenge-list"></select></div>
               <div class="form-row"><label for="challenge-v3-diet">식단 선택</label><select id="challenge-v3-diet" aria-controls="challenge-list"></select></div>
               <div class="form-row"><label for="challenge-v3-activity">운동 선택</label><select id="challenge-v3-activity" aria-controls="challenge-list"></select></div>
+              <button class="secondary" id="challenge-v4-refresh" type="button">다른 추천 보기</button>
             </div>
             <p id="challenge-v3-policy" role="status">챌린지 후보를 확인할 수 있습니다.</p>
             <p class="medical-notice">수분·식사·운동에 대한 의료진 지침이 있다면 우선하세요. 물을 많이 마시거나 목표를 억지로 채우는 과제가 아닙니다.</p>
@@ -828,6 +851,8 @@
                 </div>
                 <h4 id="record-modal-title">오늘 하셨나요?</h4>
                 <p id="record-simple-description">사진 없이 바로 기록돼요.</p>
+                <p id="record-simple-fallback" class="record-simple-note" hidden></p>
+                <p id="record-simple-safety" class="record-simple-note" hidden></p>
                 <div id="water-serving-control" class="water-serving-control" hidden>
                   <label for="water-serving-count">오늘 물 몇 잔을 마셨나요?</label>
                   <div class="water-serving-stepper">
